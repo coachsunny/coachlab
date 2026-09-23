@@ -1,6 +1,10 @@
 ﻿name = "coachlab"
-compatibility_date = "2024-01-01"
+main = "worker.js"
+compatibility_date = "2024-09-01"
 pages_build_output_dir = "./public"
+
+[assets]
+directory = "./public"
 
 [vars]
 GEMINI_MODEL = "gemini-3.8-flash"

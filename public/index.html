@@ -1,0 +1,422 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoachLab - 沟通与教练对话模拟训练室</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部导航栏 -->
+    <header class="navbar">
+      <div class="nav-left">
+        <div class="brand" id="brand-logo" title="回到首页">
+          <span class="brand-icon">🎯</span>
+          <div class="brand-text">
+            <span class="brand-title">CoachLab</span>
+            <span class="brand-sub">对话教练模拟室</span>
+          </div>
+        </div>
+        <div id="nav-framework-badge" class="nav-framework-badge hidden">
+          <span id="nav-fw-icon">🕊️</span>
+          <span id="nav-fw-name">非暴力沟通 (NVC)</span>
+        </div>
+      </div>
+
+      <div class="nav-right">
+        <button id="btn-history" class="nav-btn" title="查看过往练习记录">
+          <span class="icon">📜</span> 练习记录
+        </button>
+        <button id="btn-settings" class="nav-btn" title="设置 Google Gemini API Key">
+          <span class="icon">⚙️</span> API 设置
+          <span id="key-status-dot" class="status-dot dot-warn" title="未检测到 API Key"></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 主体内容区 (切换不同画面) -->
+    <main class="main-content">
+
+      <!-- ================= 视图 1: 设置与情境选择 ================= -->
+      <section id="view-setup" class="view-panel active">
+        <div class="setup-container">
+          <!-- 页面引导标题 -->
+          <div class="page-intro">
+            <h1>打造你的专属教练对话练习场</h1>
+            <p>自定义练习对象与情境，选用经典沟通理论。由 Google AI 拟真互动，在安全无压力的环境中锻炼高情商对话力。</p>
+          </div>
+
+          <!-- Step 1: 选择沟通/教练模型 -->
+          <div class="setup-card">
+            <div class="card-header">
+              <span class="step-num">1</span>
+              <div>
+                <h2>选择练习运用的模式与理论</h2>
+                <p class="section-desc">不同的理论模型将引导您练习不同的提问切角、共情维度与反馈重点。</p>
+              </div>
+            </div>
+
+            <div class="framework-grid" id="framework-selector-grid">
+              <!-- 由 JS 动态产生各理论卡片 -->
+            </div>
+
+            <!-- 所选理论的即时指引卡 -->
+            <div id="active-framework-preview" class="framework-preview-card">
+              <!-- 动态载入指引与心法 -->
+            </div>
+
+            <!-- 自定义理论输入框 (若选 custom 时展开) -->
+            <div id="custom-framework-box" class="custom-framework-box hidden">
+              <label for="custom-framework-input">输入您的专属沟通原则或企业指引：</label>
+              <textarea id="custom-framework-input" rows="3" placeholder="例如：1. 倾听不打断 2. 确认事实与数字 3. 探寻感受 4. 引导自主承诺..."></textarea>
+            </div>
+          </div>
+
+          <!-- Step 2: 练习对象与冲突情境 -->
+          <div class="setup-card">
+            <div class="card-header">
+              <span class="step-num">2</span>
+              <div>
+                <h2>设定练习对象与情境背景</h2>
+                <p class="section-desc">可快速点击热门预设范例，或完全自定义您生活或职场中遇到的棘手对象。</p>
+              </div>
+            </div>
+
+            <!-- 预设情境按钮 -->
+            <div class="preset-section">
+              <div class="preset-label">⚡ 快速带入经典练习情境：</div>
+              <div class="preset-pills" id="preset-pills-container">
+                <!-- 由 JS 动态渲染各情境按钮 -->
+              </div>
+            </div>
+
+            <!-- 自定义对象表单 -->
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="target-name">对象称呼 / 姓名 <span class="req">*</span></label>
+                <input type="text" id="target-name" placeholder="例如：小陈、小翔、张总监" value="小陈">
+              </div>
+
+              <div class="form-group">
+                <label for="target-role">身份与关系 <span class="req">*</span></label>
+                <input type="text" id="target-role" placeholder="例如：软件研发下属、青春期儿子、跨部门主管" value="软件研发下属 / 团队成员">
+              </div>
+
+              <div class="form-group full-width">
+                <label for="target-traits">性格特质与心理防卫机制 <span class="req">*</span></label>
+                <input type="text" id="target-traits" placeholder="例如：自尊心强、害怕承担责任被惩罚、习惯归咎于环境或沉默抗拒" value="技术能力不错但自尊心强、防卫心重。害怕被指责或被贴上无能标签，习惯找借口或沉默。">
+              </div>
+
+              <div class="form-group full-width">
+                <label for="target-scenario">当前冲突事件 / 背景情境 <span class="req">*</span></label>
+                <textarea id="target-scenario" rows="3" placeholder="具体描述发生了什么事？例如：项目进度延误了四天未交、期中考成绩大幅退步且连续多天锁门打游戏...">这季度关键项目的模块原定周三交付，但小陈延迟了四天未交，且未主动同步状况。现在主管（您）约小陈在会议室进行一对一面谈，想了解状况并协助推进。</textarea>
+              </div>
+
+              <div class="form-group">
+                <label for="target-initial-mood">对象初始态度 / 心情状态</label>
+                <input type="text" id="target-initial-mood" placeholder="例如：紧绷防御、说话简短、眼神回避" value="紧绷防御、说话言简意赅，眼神不太敢直视，担心主管要兴师问罪。">
+              </div>
+
+              <div class="form-group">
+                <label for="difficulty-level">挑战难度等级</label>
+                <select id="difficulty-level">
+                  <option value="beginner">🌱 温和引导 (初学友善，共情后较易软化)</option>
+                  <option value="realistic" selected>🔥 写实逼真 (真实心理防卫，考验持续共情)</option>
+                  <option value="challenging">⚡ 高难挑战 (强烈抗拒/防御心重，极度敏感)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 开始按钮 -->
+          <div class="setup-actions">
+            <button id="btn-start-practice" class="btn btn-primary btn-large">
+              <span>🚀 开始沉浸式对话练习</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 视图 2: 对话练习室 ================= -->
+      <section id="view-practice" class="view-panel">
+        <div class="practice-container">
+          
+          <!-- 练习室顶部状态栏 -->
+          <div class="practice-header-bar">
+            <div class="persona-badge">
+              <div class="avatar" id="room-avatar">👤</div>
+              <div class="persona-details">
+                <div class="persona-title-row">
+                  <span class="persona-name" id="room-target-name">小陈</span>
+                  <span class="persona-role" id="room-target-role">软件研发下属</span>
+                  <span class="difficulty-tag" id="room-diff-tag">写实</span>
+                </div>
+                <div class="persona-scenario-brief" id="room-scenario-brief">
+                  情境：模块进度延迟四天，正进行一对一面谈
+                </div>
+              </div>
+            </div>
+
+            <div class="header-right-controls">
+              <div class="turn-counter">
+                对话轮次：<span id="turn-count" class="badge-count">0</span>
+              </div>
+              <button id="btn-framework-guide-toggle" class="btn btn-outline btn-sm" title="查看此模式心法秘笈">
+                <span id="room-fw-icon">🕊️</span> 模式秘笈
+              </button>
+              <button id="btn-end-practice" class="btn btn-danger btn-sm" title="结束对话并进行 AI 复盘诊断">
+                📊 结束练习并给出评价
+              </button>
+            </div>
+          </div>
+
+          <!-- 理论秘笈折叠卡 (点击展开) -->
+          <div id="framework-cheat-sheet" class="cheat-sheet-card hidden">
+            <!-- 动态填入模式重点 -->
+          </div>
+
+          <!-- 对话消息列表 -->
+          <div class="chat-viewport" id="chat-viewport">
+            <div class="chat-messages" id="chat-messages">
+              <!-- 消息将由 JS 动态追加 -->
+            </div>
+          </div>
+
+          <!-- 输入与即时锦囊工具栏 -->
+          <div class="practice-input-panel">
+            <!-- 快捷工具栏 -->
+            <div class="input-toolbar">
+              <button id="btn-get-hint" class="tool-btn hint-btn" title="卡关不知道怎么说？向大师级教练寻求锦囊提示">
+                💡 获取教练锦囊 (Coach Hint)
+              </button>
+              <button id="btn-undo-turn" class="tool-btn undo-btn" title="撤回上一句发言并重新尝试">
+                ⏪ 撤回重试
+              </button>
+              <label class="toggle-label" title="切换显示角色当下的内心心理状态分析">
+                <input type="checkbox" id="toggle-inner-thoughts" checked>
+                <span>显示对象内心转折</span>
+              </label>
+            </div>
+
+            <!-- 文字输入区 -->
+            <div class="input-form">
+              <textarea 
+                id="user-input-text" 
+                rows="2" 
+                placeholder="输入你想对他说的话... (按 Enter 发送，Shift + Enter 换行)"
+              ></textarea>
+              <button id="btn-send-message" class="btn btn-primary btn-send">
+                <span>发送</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ================= 视图 3: 评估与复盘诊断报告 ================= -->
+      <section id="view-report" class="view-panel">
+        <div class="report-container">
+          
+          <!-- 报告顶部横幅 -->
+          <div class="report-hero-card">
+            <div class="report-score-box">
+              <div class="score-circle">
+                <span class="score-number" id="rpt-overall-score">--</span>
+                <span class="score-max">/100</span>
+              </div>
+              <div class="score-level-badge" id="rpt-overall-level">评估中</div>
+            </div>
+
+            <div class="report-hero-text">
+              <div class="report-meta-row">
+                <span class="badge" id="rpt-framework-name">非暴力沟通 (NVC)</span>
+                <span class="meta-item">对象：<strong id="rpt-target-name">小陈</strong></span>
+                <span class="meta-item">轮次：<strong id="rpt-turns">5 轮</strong></span>
+                <span class="meta-item" id="rpt-date">2026/09/23</span>
+              </div>
+              <h2 class="report-title">教练对话实战复盘评估报告</h2>
+              <p class="report-summary" id="rpt-summary">
+                正在进行深度教练分析...
+              </p>
+            </div>
+          </div>
+
+          <!-- 五大核心能力维度指标长条 -->
+          <div class="report-card">
+            <h3 class="card-title">📊 五大核心沟通指标剖析</h3>
+            <div class="dimension-grid" id="dimension-bars-container">
+              <!-- JS 动态生成长条指标 -->
+            </div>
+          </div>
+
+          <!-- 亮点：做得好的地方 -->
+          <div class="report-card strengths-card">
+            <div class="card-title-row">
+              <h3 class="card-title text-success">🌟 做得好的亮点与有效转折</h3>
+              <span class="card-sub-badge">精确引用对话</span>
+            </div>
+            <div class="strengths-list" id="rpt-strengths-list">
+              <!-- JS 动态渲染 -->
+            </div>
+          </div>
+
+          <!-- 改善机会与金句重构 -->
+          <div class="report-card growth-card">
+            <div class="card-title-row">
+              <h3 class="card-title text-warning">💡 改善机会与示范金句 (Before & After)</h3>
+              <span class="card-sub-badge">实战重构示范</span>
+            </div>
+            <div class="growth-list" id="rpt-growth-list">
+              <!-- JS 动态渲染 -->
+            </div>
+          </div>
+
+          <!-- 理论深度探勘 -->
+          <div class="report-card deepdive-card">
+            <h3 class="card-title">🔍 理论架构实践深度诊断</h3>
+            <div class="deepdive-content">
+              <div class="deepdive-section">
+                <div class="deepdive-label">阶段与层次探讨分析：</div>
+                <p id="rpt-stage-analysis">加载中...</p>
+              </div>
+              <div class="deepdive-section highlight-box">
+                <div class="deepdive-label">🎯 本理论核心心法提醒：</div>
+                <p id="rpt-key-takeaway">加载中...</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 下一步刻意练习建议 -->
+          <div class="report-card action-card">
+            <h3 class="card-title">🚀 下一步刻意练习行动指引</h3>
+            <ul class="action-tips-list" id="rpt-practice-tips">
+              <!-- JS 动态渲染 -->
+            </ul>
+          </div>
+
+          <!-- 报告底部操作按钮 -->
+          <div class="report-actions">
+            <button id="btn-copy-report" class="btn btn-outline">
+              📋 复制 Markdown 报告
+            </button>
+            <button id="btn-practice-again" class="btn btn-secondary">
+              🔄 针对同情境再次练习
+            </button>
+            <button id="btn-new-practice" class="btn btn-primary">
+              ⚙️ 挑选新主题与情境
+            </button>
+            <button id="btn-print-report" class="btn btn-outline">
+              🖨️ 打印 / 导出 PDF
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ================= 弹窗: API Key 与设置 ================= -->
+    <div id="modal-settings" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3>⚙️ Google Gemini API 设置</h3>
+          <button class="modal-close" id="btn-close-settings">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-tip">
+            本程序后端采用 Google AI 最新模型（<code>gemini-3.8-flash</code>）进行拟真对话与专业教练评估。
+          </p>
+
+          <div class="form-group">
+            <label for="input-api-key">Google Gemini API Key</label>
+            <div class="input-with-action">
+              <input type="password" id="input-api-key" placeholder="AIzaSy...">
+              <button id="btn-toggle-key-visibility" class="btn-icon" title="显示/隐藏密钥">👁️</button>
+            </div>
+            <span class="help-text">
+              尚未有 API Key？可至 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio 免费申请</a>。密钥会安全存储于您的浏览器 LocalStorage。
+            </span>
+          </div>
+
+          <div class="form-group">
+            <label for="select-gemini-model">选择 Gemini 模型</label>
+            <select id="select-gemini-model">
+              <option value="gemini-3.8-flash" selected>gemini-3.8-flash (推荐，速度快且推理强)</option>
+              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (高阶深度分析)</option>
+            </select>
+          </div>
+
+          <div id="test-key-result" class="test-result-box hidden"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-test-connection" class="btn btn-outline">
+            🔌 测试连接
+          </button>
+          <button id="btn-save-settings" class="btn btn-primary">
+            保存设置
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 教练锦囊 (Coach Hint) 浮动抽屉 ================= -->
+    <div id="modal-hint" class="modal-overlay hidden">
+      <div class="modal-dialog modal-hint-dialog">
+        <div class="modal-header">
+          <div class="hint-title-group">
+            <span class="hint-sparkle">💡</span>
+            <h3>高级教练即时锦囊 (Coach Hint)</h3>
+          </div>
+          <button class="modal-close" id="btn-close-hint">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="hint-content" class="hint-content-box">
+            <div class="loading-state">
+              <div class="spinner"></div>
+              <p>教练督导正在深度解读对话局势与心理状态...</p>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-apply-hint" class="btn btn-primary">
+            我明白了，返回对话
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 历史记录 ================= -->
+    <div id="modal-history" class="modal-overlay hidden">
+      <div class="modal-dialog modal-large">
+        <div class="modal-header">
+          <h3>📜 过往教练练习记录</h3>
+          <button class="modal-close" id="btn-close-history">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div id="history-list" class="history-list-box">
+            <!-- JS 动态生成历史卡片 -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-clear-history" class="btn btn-danger btn-outline btn-sm">
+            清空历史记录
+          </button>
+          <button class="btn btn-secondary modal-close-btn" id="btn-dismiss-history">
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 载入模块 JS -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

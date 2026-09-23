@@ -1,0 +1,28 @@
+﻿{
+  "name": "coach-dialogue-app",
+  "version": "1.0.0",
+  "description": "Interactive Coaching Conversation Simulator with Persona Customization, Coaching Frameworks (NVC, Iceberg, GROW, etc.) and AI-Powered Evaluations using Google Gemini API",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "coaching",
+    "gemini",
+    "nvc",
+    "iceberg-model",
+    "grow-model",
+    "roleplay",
+    "dialogue"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.23.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}

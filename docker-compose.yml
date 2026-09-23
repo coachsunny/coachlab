@@ -1,0 +1,11 @@
+﻿services:
+  coachlab:
+    build: .
+    container_name: coachlab
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}

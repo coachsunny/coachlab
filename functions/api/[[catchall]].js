@@ -3,11 +3,28 @@ import { FRAMEWORKS, buildRoleplaySystemPrompt, buildCoachHintPrompt, buildEvalu
 const DEFAULT_MODEL = "gemini-3.8-flash";
 
 function getServerKey(env) {
-  const key = (env && env.GEMINI_API_KEY)
-    || (typeof globalThis !== "undefined" && globalThis.GEMINI_API_KEY)
-    || (typeof process !== "undefined" && process?.env?.GEMINI_API_KEY)
+  if (env && typeof env === "object") {
+    // 1. 直接匹配常见命名
+    const directKey = env.GEMINI_API_KEY 
+      || env.GOOGLE_API_KEY 
+      || env.GEMINI_KEY 
+      || env.GOOGLE_GEMINI_API_KEY;
+    if (directKey && typeof directKey === "string" && directKey.trim()) {
+      return directKey.trim();
+    }
+
+    // 2. 容错查找：防大小写或前后空格等
+    for (const [k, v] of Object.entries(env)) {
+      if (k.trim().toLowerCase().includes("gemini") && typeof v === "string" && v.trim()) {
+        return v.trim();
+      }
+    }
+  }
+
+  const globalKey = (typeof globalThis !== "undefined" && (globalThis.GEMINI_API_KEY || globalThis.GOOGLE_API_KEY))
+    || (typeof process !== "undefined" && (process?.env?.GEMINI_API_KEY || process?.env?.GOOGLE_API_KEY))
     || "";
-  return typeof key === "string" ? key.trim() : "";
+  return typeof globalKey === "string" ? globalKey.trim() : "";
 }
 
 function getApiKey(request, env, reqBody) {
@@ -165,13 +182,15 @@ export async function onRequest(context) {
   if (pathname.endsWith("/frameworks") && request.method === "GET") {
     const serverKey = getServerKey(env);
     const isValidFormat = serverKey.startsWith("AIzaSy") || serverKey.startsWith("AQ.");
+    const envKeys = env ? Object.keys(env).filter(k => k !== "ASSETS") : [];
     return jsonResponse({
       ok: true,
       frameworks: FRAMEWORKS,
       defaultModel: DEFAULT_MODEL,
       hasServerKey: !!serverKey,
       serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
-      isServerKeyValidFormat: isValidFormat
+      isServerKeyValidFormat: isValidFormat,
+      envKeys
     });
   }
 

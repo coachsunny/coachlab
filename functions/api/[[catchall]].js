@@ -24,42 +24,70 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
     throw new Error("未检测到 Google Gemini API Key。请在右上角“设置”中配置，或在 Cloudflare 环境变量中添加 GEMINI_API_KEY。");
   }
 
-  const modelName = model || DEFAULT_MODEL;
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelName + ":generateContent?key=" + apiKey;
+  const requestedModel = model || DEFAULT_MODEL;
+  // 备用模型清单：若当前模型遇到 Google 免费版峰值繁忙 (high demand)，自动无缝降级重试
+  const modelCandidates = [requestedModel];
+  if (requestedModel !== "gemini-2.5-flash") {
+    modelCandidates.push("gemini-2.5-flash");
+  }
 
-  const payload = {
-    contents,
-    generationConfig: {
-      temperature
+  let lastError = null;
+  for (let i = 0; i < modelCandidates.length; i++) {
+    const currentModel = modelCandidates[i];
+    try {
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + currentModel + ":generateContent?key=" + apiKey;
+
+      const payload = {
+        contents,
+        generationConfig: {
+          temperature
+        }
+      };
+
+      if (systemInstruction) {
+        payload.systemInstruction = {
+          parts: [{ text: systemInstruction }]
+        };
+      }
+
+      if (jsonMode) {
+        payload.generationConfig.responseMimeType = "application/json";
+      }
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const resData = await resp.json();
+
+      if (!resp.ok) {
+        const errMsg = resData.error?.message || "Google API 请求失败";
+        const isHighDemand = errMsg.includes("high demand") || resp.status === 503 || resp.status === 429;
+        if (isHighDemand && i < modelCandidates.length - 1) {
+          console.warn("Model " + currentModel + " busy, automatically switching to " + modelCandidates[i + 1]);
+          lastError = new Error(errMsg);
+          continue;
+        }
+        throw new Error(errMsg);
+      }
+
+      const candidate = resData.candidates?.[0];
+      const text = candidate?.content?.parts?.[0]?.text || "";
+      return text;
+    } catch (err) {
+      lastError = err;
+      const isHighDemand = err.message.includes("high demand") || err.message.includes("503") || err.message.includes("429");
+      if (isHighDemand && i < modelCandidates.length - 1) {
+        console.warn("Retrying with fallback model due to:", err.message);
+        continue;
+      }
+      throw err;
     }
-  };
-
-  if (systemInstruction) {
-    payload.systemInstruction = {
-      parts: [{ text: systemInstruction }]
-    };
   }
 
-  if (jsonMode) {
-    payload.generationConfig.responseMimeType = "application/json";
-  }
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
-  const resData = await resp.json();
-
-  if (!resp.ok) {
-    const errMsg = resData.error?.message || "Google API 请求失败";
-    throw new Error(errMsg);
-  }
-
-  const candidate = resData.candidates?.[0];
-  const text = candidate?.content?.parts?.[0]?.text || "";
-  return text;
+  throw lastError;
 }
 
 export async function onRequest(context) {

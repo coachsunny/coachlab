@@ -130,6 +130,7 @@ async function checkServerStatus() {
       state.hasServerKey = !!data.hasServerKey;
       state.serverKeyPreview = data.serverKeyPreview || null;
       state.isServerKeyValidFormat = !!data.isServerKeyValidFormat;
+      state.isAQKey = !!data.isAQKey;
       if (data.defaultModel && !localStorage.getItem("gemini_model")) {
         state.geminiModel = data.defaultModel;
         elements.selectGeminiModel.value = data.defaultModel;
@@ -155,11 +156,17 @@ function updateServerKeyBannerUI() {
         <span><strong>✅ 云端全局 API Key 已就绪</strong>（${state.serverKeyPreview || "已配置"}）<br>
         <span style="font-size: 0.8rem; opacity: 0.9;">所有学生/手机端留空即可直接使用，无需任何配置！</span></span>
       `;
+    } else if (state.isAQKey) {
+      elements.serverKeyIndicator.className = "server-key-banner server-key-invalid";
+      elements.serverKeyStatusText.innerHTML = `
+        <span><strong>⚠️ 云端 GEMINI_API_KEY 为 AQ. 凭证</strong>（当前值：<code>${state.serverKeyPreview}</code>）<br>
+        <span style="font-size: 0.8rem;">Gemini REST API 仅支持以 <code>AIzaSy</code> 开头的标准 API Key（即您手机上刚才测试成功的那个 Key）。请前往 Cloudflare 环境变量将其替换为 <code>AIzaSy...</code> 密钥。</span></span>
+      `;
     } else {
       elements.serverKeyIndicator.className = "server-key-banner server-key-invalid";
       elements.serverKeyStatusText.innerHTML = `
         <span><strong>⚠️ 云端 GEMINI_API_KEY 格式异常</strong>（当前值：<code>${state.serverKeyPreview}</code>）<br>
-        <span style="font-size: 0.8rem;">Google Gemini API Key 必须以 <code>AIzaSy</code> 开头。请前往 Cloudflare 控制台将环境变量修改为正确的 Key！</span></span>
+        <span style="font-size: 0.8rem;">请前往 Cloudflare 控制台检查环境变量，确保填入以 <code>AIzaSy</code> 开头的完整 Key。</span></span>
       `;
     }
   } else {

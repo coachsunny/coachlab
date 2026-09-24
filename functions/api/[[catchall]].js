@@ -39,10 +39,6 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
     throw new Error("未检测到 Google Gemini API Key。请在右上角“设置”中配置，或在 Cloudflare 环境变量中添加 GEMINI_API_KEY。");
   }
 
-  if (!apiKey.startsWith("AIzaSy")) {
-    throw new Error(`API Key 格式无效（当前以 "${apiKey.slice(0, 7)}..." 开头）。Google Gemini 官方 API Key 必须以 "AIzaSy" 开头，请确认是否误填了其他平台的 Token。`);
-  }
-
   const requestedModel = (model && model !== "gemini-2.5-flash") ? model : DEFAULT_MODEL;
   
   // 按照 Google 最新支持模型配置高可用轮询列表：gemini-3.6-flash 与 gemini-3.8-flash
@@ -61,7 +57,7 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
   for (let i = 0; i < modelCandidates.length; i++) {
     const currentModel = modelCandidates[i];
     try {
-      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + currentModel + ":generateContent?key=" + apiKey;
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + currentModel + ":generateContent?key=" + encodeURIComponent(apiKey);
 
       const payload = {
         contents,
@@ -82,14 +78,21 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
 
       const resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey
+        },
         body: JSON.stringify(payload)
       });
 
       const resData = await resp.json();
 
       if (!resp.ok) {
-        const errMsg = resData.error?.message || "Google API 请求失败";
+        let errMsg = resData.error?.message || "Google API 请求失败";
+        const detailsStr = JSON.stringify(resData.error?.details || "");
+        if (errMsg.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED") || detailsStr.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
+          errMsg = "Google API 认证失败 (ACCESS_TOKEN_TYPE_UNSUPPORTED)：当前填写的 AQ. 开头密钥不被 Generative Language API 接受。请改用以 AIzaSy 开头的标准 Gemini API Key（即您手机上之前使用的那个 Key）。";
+        }
         const isRetryable = errMsg.includes("high demand") || errMsg.includes("no longer available") || resp.status === 503 || resp.status === 429;
         if (isRetryable && i < modelCandidates.length - 1) {
           console.warn("Model " + currentModel + " failed (" + errMsg + "), auto-switching to " + modelCandidates[i + 1]);
@@ -136,13 +139,16 @@ export async function onRequest(context) {
   // 1. GET /api/frameworks
   if (pathname.endsWith("/frameworks") && request.method === "GET") {
     const serverKey = getServerKey(env);
+    const isAIza = serverKey.startsWith("AIzaSy");
+    const isAQ = serverKey.startsWith("AQ.");
     return jsonResponse({
       ok: true,
       frameworks: FRAMEWORKS,
       defaultModel: DEFAULT_MODEL,
       hasServerKey: !!serverKey,
       serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
-      isServerKeyValidFormat: serverKey ? serverKey.startsWith("AIzaSy") : false
+      isServerKeyValidFormat: isAIza,
+      isAQKey: isAQ
     });
   }
 

@@ -329,17 +329,22 @@
         </div>
         <div class="modal-body">
           <p class="modal-tip">
-            本程序后端采用 Google AI 最新模型（<code>gemini-3.8-flash</code>）进行拟真对话与专业教练评估。
+            本程序后端采用 Google AI 最新模型（<code>gemini-3.8-flash</code> / <code>gemini-3.6-flash</code>）进行拟真对话与专业教练评估。
           </p>
 
+          <!-- 云端全局 Key 状态横幅 -->
+          <div id="server-key-indicator" class="server-key-banner server-key-none">
+            <span id="server-key-status-text">⏳ 正在检测云端全局 Key...</span>
+          </div>
+
           <div class="form-group">
-            <label for="input-api-key">Google Gemini API Key</label>
+            <label for="input-api-key">Google Gemini API Key（选填 / 优先覆盖）</label>
             <div class="input-with-action">
               <input type="password" id="input-api-key" placeholder="AIzaSy...">
               <button id="btn-toggle-key-visibility" class="btn-icon" title="显示/隐藏密钥">👁️</button>
             </div>
             <span class="help-text">
-              尚未有 API Key？可至 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio 免费申请</a>。密钥会安全存储于您的浏览器 LocalStorage。
+              若上方显示云端已配置全局 Key，此处<strong>留空即可直接使用</strong>；若在此填入，则会优先使用您的专属 Key。Google API Key 格式必须以 <code>AIzaSy</code> 开头。
             </span>
           </div>
 

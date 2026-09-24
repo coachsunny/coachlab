@@ -12,6 +12,8 @@ const state = {
   apiKey: localStorage.getItem("gemini_api_key") || "",
   geminiModel: localStorage.getItem("gemini_model") || "gemini-3.6-flash",
   hasServerKey: false,
+  serverKeyPreview: null,
+  isServerKeyValidFormat: false,
   practiceHistory: JSON.parse(localStorage.getItem("coachlab_history") || "[]")
 };
 
@@ -86,6 +88,8 @@ const elements = {
   // Modals
   modalSettings: document.getElementById("modal-settings"),
   btnCloseSettings: document.getElementById("btn-close-settings"),
+  serverKeyIndicator: document.getElementById("server-key-indicator"),
+  serverKeyStatusText: document.getElementById("server-key-status-text"),
   inputApiKey: document.getElementById("input-api-key"),
   btnToggleKeyVisibility: document.getElementById("btn-toggle-key-visibility"),
   selectGeminiModel: document.getElementById("select-gemini-model"),
@@ -124,11 +128,14 @@ async function checkServerStatus() {
     const data = await res.json();
     if (data.ok) {
       state.hasServerKey = !!data.hasServerKey;
+      state.serverKeyPreview = data.serverKeyPreview || null;
+      state.isServerKeyValidFormat = !!data.isServerKeyValidFormat;
       if (data.defaultModel && !localStorage.getItem("gemini_model")) {
         state.geminiModel = data.defaultModel;
         elements.selectGeminiModel.value = data.defaultModel;
       }
       updateKeyStatusUI();
+      updateServerKeyBannerUI();
     }
   } catch (err) {
     console.warn("无法连接后端服务器:", err);
@@ -136,16 +143,48 @@ async function checkServerStatus() {
 }
 
 /**
+ * 更新设置窗口内的云端全局 Key 提示横幅
+ */
+function updateServerKeyBannerUI() {
+  if (!elements.serverKeyIndicator || !elements.serverKeyStatusText) return;
+
+  if (state.hasServerKey) {
+    if (state.isServerKeyValidFormat) {
+      elements.serverKeyIndicator.className = "server-key-banner server-key-active";
+      elements.serverKeyStatusText.innerHTML = `
+        <span><strong>✅ 云端全局 API Key 已就绪</strong>（${state.serverKeyPreview || "已配置"}）<br>
+        <span style="font-size: 0.8rem; opacity: 0.9;">所有学生/手机端留空即可直接使用，无需任何配置！</span></span>
+      `;
+    } else {
+      elements.serverKeyIndicator.className = "server-key-banner server-key-invalid";
+      elements.serverKeyStatusText.innerHTML = `
+        <span><strong>⚠️ 云端 GEMINI_API_KEY 格式异常</strong>（当前值：<code>${state.serverKeyPreview}</code>）<br>
+        <span style="font-size: 0.8rem;">Google Gemini API Key 必须以 <code>AIzaSy</code> 开头。请前往 Cloudflare 控制台将环境变量修改为正确的 Key！</span></span>
+      `;
+    }
+  } else {
+    elements.serverKeyIndicator.className = "server-key-banner server-key-none";
+    elements.serverKeyStatusText.innerHTML = `
+      <span><strong>ℹ️ 云端暂未检测到 GEMINI_API_KEY</strong><br>
+      <span style="font-size: 0.8rem;">学生端可在下方填入个人 API Key，或由管理员在 Cloudflare 环境变量中添加全局 Key。</span></span>
+    `;
+  }
+}
+
+/**
  * 更新顶部密钥指示灯
  */
 function updateKeyStatusUI() {
-  const hasKey = !!state.apiKey || state.hasServerKey;
+  const hasKey = !!state.apiKey || (state.hasServerKey && state.isServerKeyValidFormat);
   if (hasKey) {
     elements.keyStatusDot.className = "status-dot dot-ok";
-    elements.keyStatusDot.title = state.apiKey ? "已设置客户端 API Key" : "使用服务器端环境变量 API Key";
+    elements.keyStatusDot.title = state.apiKey ? "已设置客户端专属 API Key" : "云端全局 API Key 生效中（学生可直接使用）";
+  } else if (state.hasServerKey && !state.isServerKeyValidFormat) {
+    elements.keyStatusDot.className = "status-dot dot-warn";
+    elements.keyStatusDot.title = "云端 API Key 格式异常（非 AIzaSy 开头）";
   } else {
     elements.keyStatusDot.className = "status-dot dot-warn";
-    elements.keyStatusDot.title = "尚未设置 API Key，点击以配置";
+    elements.keyStatusDot.title = "尚未设置 API Key，点击右上角设置以配置";
   }
 }
 
@@ -289,7 +328,15 @@ async function startPractice() {
   if (!state.apiKey && !state.hasServerKey) {
     showSettingsModal();
     elements.testKeyResult.className = "test-result-box test-error";
-    elements.testKeyResult.textContent = "请先在此填入您的 Google Gemini API Key 以启动对话。";
+    elements.testKeyResult.textContent = "未检测到 API Key。请在下方填入您的 Google Gemini API Key，或由管理员在 Cloudflare 环境变量中配置 GEMINI_API_KEY。";
+    elements.testKeyResult.classList.remove("hidden");
+    return;
+  }
+
+  if (!state.apiKey && state.hasServerKey && !state.isServerKeyValidFormat) {
+    showSettingsModal();
+    elements.testKeyResult.className = "test-result-box test-error";
+    elements.testKeyResult.textContent = `云端 GEMINI_API_KEY 格式无效（${state.serverKeyPreview}）。Google API Key 必须以 AIzaSy 开头，请前往 Cloudflare 后台修改，或在此输入您个人的 Key。`;
     elements.testKeyResult.classList.remove("hidden");
     return;
   }
@@ -855,6 +902,13 @@ function showSettingsModal() {
   elements.inputApiKey.value = state.apiKey;
   elements.selectGeminiModel.value = state.geminiModel;
   elements.testKeyResult.classList.add("hidden");
+  if (state.hasServerKey && state.isServerKeyValidFormat) {
+    elements.inputApiKey.placeholder = `（已生效云端全局 Key ${state.serverKeyPreview || ""}，留空即可）`;
+  } else {
+    elements.inputApiKey.placeholder = "AIzaSy...";
+  }
+  updateServerKeyBannerUI();
+  checkServerStatus(); // 异步刷新最新云端配置
   elements.modalSettings.classList.remove("hidden");
 }
 
@@ -904,14 +958,16 @@ function bindEvents() {
     localStorage.setItem("gemini_model", state.geminiModel);
     updateKeyStatusUI();
     hideModals();
-    alert("设置已保存！");
+    alert("设置已保存！" + (state.apiKey ? "（将优先使用您设置的专属 API Key）" : "（将使用云端全局配置）"));
   });
 
   elements.btnTestConnection.addEventListener("click", async () => {
     const testKey = elements.inputApiKey.value.trim();
     const model = elements.selectGeminiModel.value;
     elements.testKeyResult.className = "test-result-box";
-    elements.testKeyResult.textContent = "连接测试中，请稍候...";
+    elements.testKeyResult.textContent = testKey 
+      ? "正在测试客户端自定义 API Key..." 
+      : "输入框为空，正在测试 Cloudflare 云端全局 API Key...";
     elements.testKeyResult.classList.remove("hidden");
 
     try {
@@ -923,7 +979,9 @@ function bindEvents() {
       const data = await res.json();
       if (data.ok) {
         elements.testKeyResult.className = "test-result-box test-success";
-        elements.testKeyResult.textContent = "✅ 连接成功！Google AI API 运行正常。";
+        elements.testKeyResult.textContent = data.message || "✅ 连接成功！Google AI API 运行正常。";
+        // 刷新一次云端状态
+        await checkServerStatus();
       } else {
         throw new Error(data.error || "测试失败");
       }

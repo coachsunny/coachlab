@@ -2,8 +2,23 @@ import { FRAMEWORKS, buildRoleplaySystemPrompt, buildCoachHintPrompt, buildEvalu
 
 const DEFAULT_MODEL = "gemini-3.8-flash";
 
+function getServerKey(env) {
+  const key = (env && env.GEMINI_API_KEY)
+    || (typeof globalThis !== "undefined" && globalThis.GEMINI_API_KEY)
+    || (typeof process !== "undefined" && process?.env?.GEMINI_API_KEY)
+    || "";
+  return typeof key === "string" ? key.trim() : "";
+}
+
 function getApiKey(request, env, reqBody) {
-  return (reqBody && reqBody.apiKey && reqBody.apiKey.trim()) || env.GEMINI_API_KEY || "";
+  const clientKey = (reqBody && reqBody.apiKey && typeof reqBody.apiKey === "string") ? reqBody.apiKey.trim() : "";
+  if (clientKey) return clientKey;
+  return getServerKey(env);
+}
+
+function getKeyPreview(key) {
+  if (!key || key.length < 8) return "";
+  return key.slice(0, 6) + "..." + key.slice(-4);
 }
 
 function jsonResponse(data, status = 200) {
@@ -22,6 +37,10 @@ function jsonResponse(data, status = 200) {
 async function callGeminiApi({ apiKey, model, contents, systemInstruction, temperature = 0.7, jsonMode = false }) {
   if (!apiKey) {
     throw new Error("未检测到 Google Gemini API Key。请在右上角“设置”中配置，或在 Cloudflare 环境变量中添加 GEMINI_API_KEY。");
+  }
+
+  if (!apiKey.startsWith("AIzaSy")) {
+    throw new Error(`API Key 格式无效（当前以 "${apiKey.slice(0, 7)}..." 开头）。Google Gemini 官方 API Key 必须以 "AIzaSy" 开头，请确认是否误填了其他平台的 Token。`);
   }
 
   const requestedModel = (model && model !== "gemini-2.5-flash") ? model : DEFAULT_MODEL;
@@ -116,11 +135,14 @@ export async function onRequest(context) {
 
   // 1. GET /api/frameworks
   if (pathname.endsWith("/frameworks") && request.method === "GET") {
+    const serverKey = getServerKey(env);
     return jsonResponse({
       ok: true,
       frameworks: FRAMEWORKS,
       defaultModel: DEFAULT_MODEL,
-      hasServerKey: !!env.GEMINI_API_KEY
+      hasServerKey: !!serverKey,
+      serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
+      isServerKeyValidFormat: serverKey ? serverKey.startsWith("AIzaSy") : false
     });
   }
 
@@ -141,12 +163,29 @@ export async function onRequest(context) {
   // 2. POST /api/test-key
   if (pathname.endsWith("/test-key")) {
     try {
+      const isClientKey = !!(body.apiKey && body.apiKey.trim());
+      const usedKey = isClientKey ? body.apiKey.trim() : getServerKey(env);
+
+      if (!usedKey) {
+        return jsonResponse({
+          ok: false,
+          error: "未检测到任何 API Key。手机端未输入，且云端环境变量 GEMINI_API_KEY 也未设置。"
+        }, 400);
+      }
+
       const output = await callGeminiApi({
-        apiKey,
+        apiKey: usedKey,
         model: body.modelName,
         contents: [{ parts: [{ text: "Ping" }] }]
       });
-      return jsonResponse({ ok: true, message: "API 连接测试成功！", details: { ok: true, output } });
+
+      const keySource = isClientKey ? "客户端自定义 Key" : "Cloudflare 云端全局 Key";
+      return jsonResponse({
+        ok: true,
+        message: isClientKey ? "✅ 个人 API Key 测试成功！" : "✅ 云端全局 API Key 验证成功！所有学生无需配置即可直接使用。",
+        keySource,
+        details: { ok: true, output }
+      });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 400);
     }

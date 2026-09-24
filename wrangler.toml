@@ -5,7 +5,3 @@ pages_build_output_dir = "./public"
 
 [assets]
 directory = "./public"
-
-[vars]
-GEMINI_MODEL = "gemini-3.6-flash"
-

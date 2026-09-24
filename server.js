@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
@@ -24,15 +24,23 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+function getKeyPreview(key) {
+  if (!key || key.length < 8) return "";
+  return key.slice(0, 6) + "..." + key.slice(-4);
+}
+
 /**
  * 取得支援的理论框架列表
  */
 app.get("/api/frameworks", (req, res) => {
+  const serverKey = process.env.GEMINI_API_KEY || "";
   res.json({
     ok: true,
     frameworks: FRAMEWORKS,
     defaultModel: getDefaultModel(),
-    hasServerKey: !!process.env.GEMINI_API_KEY
+    hasServerKey: !!serverKey,
+    serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
+    isServerKeyValidFormat: serverKey ? serverKey.startsWith("AIzaSy") : false
   });
 });
 
@@ -42,8 +50,13 @@ app.get("/api/frameworks", (req, res) => {
 app.post("/api/test-key", async (req, res) => {
   try {
     const { apiKey, modelName } = req.body;
+    const isClientKey = !!(apiKey && apiKey.trim());
     const result = await testGeminiKey(apiKey, modelName);
-    res.json({ ok: true, message: "API 连接测试成功！", details: result });
+    res.json({
+      ok: true,
+      message: isClientKey ? "✅ 个人 API Key 测试成功！" : "✅ 服务器全局 API Key 验证成功！所有用户无需配置即可使用。",
+      details: result
+    });
   } catch (error) {
     console.error("Test API Key Error:", error.message);
     res.status(400).json({

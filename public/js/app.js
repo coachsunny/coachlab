@@ -324,19 +324,16 @@ async function startPractice() {
   const frameworkId = state.selectedFrameworkId;
   const customFrameworkPrompt = elements.customFrameworkInput.value.trim();
 
-  // 检查 API Key
+  // 检查 API Key：若本地无专属 Key，且尚未同步云端全局 Key，先快速拉取一次云端状态
+  if (!state.apiKey && !state.hasServerKey) {
+    await checkServerStatus();
+  }
+
+  // 仅在本地无 Key 且云端也未配置任何全局 Key 时才弹出设置
   if (!state.apiKey && !state.hasServerKey) {
     showSettingsModal();
     elements.testKeyResult.className = "test-result-box test-error";
     elements.testKeyResult.textContent = "未检测到 API Key。请在下方填入您的 Google Gemini API Key，或由管理员在 Cloudflare 环境变量中配置 GEMINI_API_KEY。";
-    elements.testKeyResult.classList.remove("hidden");
-    return;
-  }
-
-  if (!state.apiKey && state.hasServerKey && !state.isServerKeyValidFormat) {
-    showSettingsModal();
-    elements.testKeyResult.className = "test-result-box test-error";
-    elements.testKeyResult.textContent = `云端 GEMINI_API_KEY 格式无效（${state.serverKeyPreview}）。Google API Key 必须以 AIzaSy 开头，请前往 Cloudflare 后台修改，或在此输入您个人的 Key。`;
     elements.testKeyResult.classList.remove("hidden");
     return;
   }

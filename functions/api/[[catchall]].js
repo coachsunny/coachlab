@@ -24,11 +24,18 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
     throw new Error("未检测到 Google Gemini API Key。请在右上角“设置”中配置，或在 Cloudflare 环境变量中添加 GEMINI_API_KEY。");
   }
 
-  const requestedModel = model || DEFAULT_MODEL;
-  // 备用模型清单：若当前模型遇到 Google 免费版峰值繁忙 (high demand)，自动无缝降级重试
+  const requestedModel = (model && model !== "gemini-2.5-flash") ? model : DEFAULT_MODEL;
+  
+  // 按照 Google 最新支持模型配置高可用轮询列表：gemini-3.6-flash 与 gemini-3.8-flash
   const modelCandidates = [requestedModel];
-  if (requestedModel !== "gemini-2.5-flash") {
-    modelCandidates.push("gemini-2.5-flash");
+  if (!modelCandidates.includes("gemini-3.6-flash")) {
+    modelCandidates.push("gemini-3.6-flash");
+  }
+  if (!modelCandidates.includes("gemini-3.8-flash")) {
+    modelCandidates.push("gemini-3.8-flash");
+  }
+  if (!modelCandidates.includes("gemini-3.5-flash-lite")) {
+    modelCandidates.push("gemini-3.5-flash-lite");
   }
 
   let lastError = null;
@@ -64,9 +71,9 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
 
       if (!resp.ok) {
         const errMsg = resData.error?.message || "Google API 请求失败";
-        const isHighDemand = errMsg.includes("high demand") || resp.status === 503 || resp.status === 429;
-        if (isHighDemand && i < modelCandidates.length - 1) {
-          console.warn("Model " + currentModel + " busy, automatically switching to " + modelCandidates[i + 1]);
+        const isRetryable = errMsg.includes("high demand") || errMsg.includes("no longer available") || resp.status === 503 || resp.status === 429;
+        if (isRetryable && i < modelCandidates.length - 1) {
+          console.warn("Model " + currentModel + " failed (" + errMsg + "), auto-switching to " + modelCandidates[i + 1]);
           lastError = new Error(errMsg);
           continue;
         }
@@ -78,9 +85,9 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
       return text;
     } catch (err) {
       lastError = err;
-      const isHighDemand = err.message.includes("high demand") || err.message.includes("503") || err.message.includes("429");
-      if (isHighDemand && i < modelCandidates.length - 1) {
-        console.warn("Retrying with fallback model due to:", err.message);
+      const isRetryable = err.message.includes("high demand") || err.message.includes("no longer available") || err.message.includes("503") || err.message.includes("429");
+      if (isRetryable && i < modelCandidates.length - 1) {
+        console.warn("Retrying with next model due to:", err.message);
         continue;
       }
       throw err;

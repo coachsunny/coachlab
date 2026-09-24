@@ -10,7 +10,7 @@ const state = {
   evaluationReport: null,
   isWaitingForAI: false,
   apiKey: localStorage.getItem("gemini_api_key") || "",
-  geminiModel: localStorage.getItem("gemini_model") || "gemini-3.8-flash",
+  geminiModel: localStorage.getItem("gemini_model") || "gemini-3.6-flash",
   hasServerKey: false,
   practiceHistory: JSON.parse(localStorage.getItem("coachlab_history") || "[]")
 };

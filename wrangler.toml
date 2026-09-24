@@ -7,4 +7,5 @@ pages_build_output_dir = "./public"
 directory = "./public"
 
 [vars]
-GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_MODEL = "gemini-3.6-flash"
+

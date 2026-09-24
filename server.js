@@ -34,13 +34,14 @@ function getKeyPreview(key) {
  */
 app.get("/api/frameworks", (req, res) => {
   const serverKey = process.env.GEMINI_API_KEY || "";
+  const isValidFormat = serverKey.startsWith("AIzaSy") || serverKey.startsWith("AQ.");
   res.json({
     ok: true,
     frameworks: FRAMEWORKS,
     defaultModel: getDefaultModel(),
     hasServerKey: !!serverKey,
     serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
-    isServerKeyValidFormat: serverKey ? serverKey.startsWith("AIzaSy") : false
+    isServerKeyValidFormat: isValidFormat
   });
 });
 

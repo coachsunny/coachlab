@@ -139,16 +139,14 @@ export async function onRequest(context) {
   // 1. GET /api/frameworks
   if (pathname.endsWith("/frameworks") && request.method === "GET") {
     const serverKey = getServerKey(env);
-    const isAIza = serverKey.startsWith("AIzaSy");
-    const isAQ = serverKey.startsWith("AQ.");
+    const isValidFormat = serverKey.startsWith("AIzaSy") || serverKey.startsWith("AQ.");
     return jsonResponse({
       ok: true,
       frameworks: FRAMEWORKS,
       defaultModel: DEFAULT_MODEL,
       hasServerKey: !!serverKey,
       serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
-      isServerKeyValidFormat: isAIza,
-      isAQKey: isAQ
+      isServerKeyValidFormat: isValidFormat
     });
   }
 

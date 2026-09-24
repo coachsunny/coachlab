@@ -33,8 +33,16 @@ function jsonResponse(data, status = 200) {
   });
 }
 
+function getBaseUrl(env) {
+  const custom = (env && env.GEMINI_BASE_URL) || (typeof process !== "undefined" && process?.env?.GEMINI_BASE_URL);
+  if (custom && typeof custom === "string" && custom.trim()) {
+    return custom.trim().replace(/\/+$/, "");
+  }
+  return "https://generativelanguage.googleapis.com";
+}
+
 // 统一调用 Google Gemini REST API (标准 Web Fetch，免任何 npm 依赖)
-async function callGeminiApi({ apiKey, model, contents, systemInstruction, temperature = 0.7, jsonMode = false }) {
+async function callGeminiApi({ apiKey, model, contents, systemInstruction, temperature = 0.7, jsonMode = false, baseUrl = "https://generativelanguage.googleapis.com" }) {
   if (!apiKey) {
     throw new Error("未检测到 Google Gemini API Key。请在右上角“设置”中配置，或在 Cloudflare 环境变量中添加 GEMINI_API_KEY。");
   }
@@ -54,65 +62,82 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
   }
 
   let lastError = null;
-  for (let i = 0; i < modelCandidates.length; i++) {
-    const currentModel = modelCandidates[i];
-    try {
-      const url = "https://generativelanguage.googleapis.com/v1beta/models/" + currentModel + ":generateContent?key=" + encodeURIComponent(apiKey);
+  const maxAttempts = 2; // 遇到区域限制或服务拥堵时自动重试
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    for (let i = 0; i < modelCandidates.length; i++) {
+      const currentModel = modelCandidates[i];
+      try {
+        const url = `${baseUrl}/v1beta/models/${currentModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-      const payload = {
-        contents,
-        generationConfig: {
-          temperature
-        }
-      };
-
-      if (systemInstruction) {
-        payload.systemInstruction = {
-          parts: [{ text: systemInstruction }]
+        const payload = {
+          contents,
+          generationConfig: {
+            temperature
+          }
         };
-      }
 
-      if (jsonMode) {
-        payload.generationConfig.responseMimeType = "application/json";
-      }
-
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const resData = await resp.json();
-
-      if (!resp.ok) {
-        let errMsg = resData.error?.message || "Google API 请求失败";
-        const detailsStr = JSON.stringify(resData.error?.details || "");
-        if (errMsg.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED") || detailsStr.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
-          errMsg = "Google API 认证失败 (ACCESS_TOKEN_TYPE_UNSUPPORTED)：当前填写的 AQ. 开头密钥不被 Generative Language API 接受。请改用以 AIzaSy 开头的标准 Gemini API Key（即您手机上之前使用的那个 Key）。";
+        if (systemInstruction) {
+          payload.systemInstruction = {
+            parts: [{ text: systemInstruction }]
+          };
         }
-        const isRetryable = errMsg.includes("high demand") || errMsg.includes("no longer available") || resp.status === 503 || resp.status === 429;
-        if (isRetryable && i < modelCandidates.length - 1) {
-          console.warn("Model " + currentModel + " failed (" + errMsg + "), auto-switching to " + modelCandidates[i + 1]);
-          lastError = new Error(errMsg);
+
+        if (jsonMode) {
+          payload.generationConfig.responseMimeType = "application/json";
+        }
+
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const resData = await resp.json();
+
+        if (!resp.ok) {
+          let errMsg = resData.error?.message || "Google API 请求失败";
+          const detailsStr = JSON.stringify(resData.error?.details || "");
+          const isGeoBlocked = errMsg.includes("User location is not supported") || errMsg.includes("location is not supported");
+          
+          if (errMsg.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED") || detailsStr.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
+            errMsg = "Google API 认证失败 (ACCESS_TOKEN_TYPE_UNSUPPORTED)：当前填写的密钥不被 Generative Language API 接受。";
+          }
+          
+          const isRetryable = isGeoBlocked || errMsg.includes("high demand") || errMsg.includes("no longer available") || resp.status === 503 || resp.status === 429;
+          
+          if (isRetryable && (i < modelCandidates.length - 1 || attempt < maxAttempts - 1)) {
+            console.warn(`Model ${currentModel} attempt ${attempt + 1} failed (${errMsg}), auto-retrying...`);
+            lastError = new Error(errMsg);
+            await new Promise(r => setTimeout(r, 600));
+            continue;
+          }
+          
+          if (isGeoBlocked) {
+            errMsg = "本次对话偶发分配至 Cloudflare 香港(HKG)等节点，触碰 Google 区域限制 (User location is not supported)。请点击左下方“⏪ 撤回重试”重新发送即可！";
+          }
+          throw new Error(errMsg);
+        }
+
+        const candidate = resData.candidates?.[0];
+        const text = candidate?.content?.parts?.[0]?.text || "";
+        return text;
+      } catch (err) {
+        lastError = err;
+        const isGeoBlocked = err.message.includes("User location is not supported") || err.message.includes("location is not supported");
+        const isRetryable = isGeoBlocked || err.message.includes("high demand") || err.message.includes("no longer available") || err.message.includes("503") || err.message.includes("429");
+        if (isRetryable && (i < modelCandidates.length - 1 || attempt < maxAttempts - 1)) {
+          console.warn("Retrying due to:", err.message);
+          await new Promise(r => setTimeout(r, 600));
           continue;
         }
-        throw new Error(errMsg);
+        if (isGeoBlocked) {
+          throw new Error("本次对话偶发分配至 Cloudflare 香港(HKG)等节点，触碰 Google 区域限制 (User location is not supported)。请点击左下方“⏪ 撤回重试”重新发送即可！");
+        }
+        throw err;
       }
-
-      const candidate = resData.candidates?.[0];
-      const text = candidate?.content?.parts?.[0]?.text || "";
-      return text;
-    } catch (err) {
-      lastError = err;
-      const isRetryable = err.message.includes("high demand") || err.message.includes("no longer available") || err.message.includes("503") || err.message.includes("429");
-      if (isRetryable && i < modelCandidates.length - 1) {
-        console.warn("Retrying with next model due to:", err.message);
-        continue;
-      }
-      throw err;
     }
   }
 
@@ -163,6 +188,7 @@ export async function onRequest(context) {
   }
 
   const apiKey = getApiKey(request, env, body);
+  const baseUrl = getBaseUrl(env);
 
   // 2. POST /api/test-key
   if (pathname.endsWith("/test-key")) {
@@ -180,7 +206,8 @@ export async function onRequest(context) {
       const output = await callGeminiApi({
         apiKey: usedKey,
         model: body.modelName,
-        contents: [{ parts: [{ text: "Ping" }] }]
+        contents: [{ parts: [{ text: "Ping" }] }],
+        baseUrl
       });
 
       const keySource = isClientKey ? "客户端自定义 Key" : "Cloudflare 云端全局 Key";
@@ -228,7 +255,8 @@ export async function onRequest(context) {
         model: modelName,
         contents,
         systemInstruction,
-        temperature: 0.8
+        temperature: 0.8,
+        baseUrl
       });
 
       let innerThought = null;
@@ -280,7 +308,8 @@ export async function onRequest(context) {
         apiKey,
         model: modelName,
         contents: [{ parts: [{ text: prompt }] }],
-        temperature: 0.7
+        temperature: 0.7,
+        baseUrl
       });
 
       return jsonResponse({ ok: true, hint: hintText });
@@ -319,7 +348,8 @@ export async function onRequest(context) {
         model: modelName,
         contents: [{ parts: [{ text: prompt }] }],
         temperature: 0.4,
-        jsonMode: true
+        jsonMode: true,
+        baseUrl
       });
 
       let reportData;

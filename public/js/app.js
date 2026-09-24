@@ -489,9 +489,13 @@ async function handleSendMessage() {
     updateTurnCount();
   } catch (err) {
     removeTypingIndicator();
+    let msg = err.message;
+    if (msg.includes("location is not supported") || msg.includes("User location")) {
+      msg = "本次请求偶发分配至 Cloudflare 香港(HKG)等节点，触碰了 Google 区域限制。请点击左下方“⏪ 撤回重试”重新发送即可！";
+    }
     appendMessage({
       role: "target",
-      content: "[连接提示] 响应超时或失败：" + err.message,
+      content: "[连接提示] 响应超时或失败：" + msg,
       innerThought: null
     });
   } finally {

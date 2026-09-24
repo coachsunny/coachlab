@@ -508,8 +508,9 @@ function appendMessage({ role, content, innerThought }) {
   const row = document.createElement("div");
   row.className = "message-row " + role;
 
+  const isMobile = window.innerWidth <= 768;
   const avatarChar = role === "user" ? "🧑‍💼" : "👤";
-  const authorName = role === "user" ? "我 (教练/对话者)" : (state.targetConfig?.targetName || "对象");
+  const authorName = role === "user" ? (isMobile ? "我" : "我 (教练/对话者)") : (state.targetConfig?.targetName || "对象");
 
   let innerThoughtHtml = "";
   if (innerThought && role === "target") {
@@ -1002,6 +1003,9 @@ function bindEvents() {
       e.preventDefault();
       handleSendMessage();
     }
+  });
+  elements.userInputText.addEventListener("focus", () => {
+    setTimeout(scrollToBottom, 320);
   });
 
   elements.btnGetHint.addEventListener("click", handleGetHint);

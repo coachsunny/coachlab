@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=2.2">
+  <link rel="stylesheet" href="css/style.css?v=2.3">
 </head>
 <body>
   <div id="app">
@@ -32,10 +32,10 @@
 
       <div class="nav-right">
         <button id="btn-history" class="nav-btn" title="查看过往练习记录">
-          <span class="icon">📜</span> 练习记录
+          <span class="icon">📜</span> <span class="nav-btn-text">练习记录</span>
         </button>
         <button id="btn-settings" class="nav-btn" title="设置 Google Gemini API Key">
-          <span class="icon">⚙️</span> API 设置
+          <span class="icon">⚙️</span> <span class="nav-btn-text">API 设置</span>
           <span id="key-status-dot" class="status-dot dot-warn" title="未检测到 API Key"></span>
         </button>
       </div>
@@ -166,13 +166,13 @@
 
             <div class="header-right-controls">
               <div class="turn-counter">
-                对话轮次：<span id="turn-count" class="badge-count">0</span>
+                <span class="turn-label">对话轮次：</span><span id="turn-count" class="badge-count">0</span>
               </div>
               <button id="btn-framework-guide-toggle" class="btn btn-outline btn-sm" title="查看此模式心法秘笈">
-                <span id="room-fw-icon">🕊️</span> 模式秘笈
+                <span id="room-fw-icon">🕊️</span> <span class="btn-text-full">模式秘笈</span><span class="btn-text-mobile">秘笈</span>
               </button>
               <button id="btn-end-practice" class="btn btn-danger btn-sm" title="结束对话并进行 AI 复盘诊断">
-                📊 结束练习并给出评价
+                📊 <span class="btn-text-full">结束练习并给出评价</span><span class="btn-text-mobile">结束评价</span>
               </button>
             </div>
           </div>
@@ -194,14 +194,14 @@
             <!-- 快捷工具栏 -->
             <div class="input-toolbar">
               <button id="btn-get-hint" class="tool-btn hint-btn" title="卡关不知道怎么说？向大师级教练寻求锦囊提示">
-                💡 获取教练锦囊 (Coach Hint)
+                💡 <span class="tool-btn-text-full">获取教练锦囊 (Coach Hint)</span><span class="tool-btn-text-mobile">教练锦囊</span>
               </button>
               <button id="btn-undo-turn" class="tool-btn undo-btn" title="撤回上一句发言并重新尝试">
-                ⏪ 撤回重试
+                ⏪ <span class="tool-btn-text-full">撤回重试</span><span class="tool-btn-text-mobile">撤回</span>
               </button>
               <label class="toggle-label" title="切换显示角色当下的内心心理状态分析">
                 <input type="checkbox" id="toggle-inner-thoughts" checked>
-                <span>显示对象内心转折</span>
+                <span class="toggle-text-full">显示对象内心转折</span><span class="toggle-text-mobile">内心转折</span>
               </label>
             </div>
 
@@ -425,6 +425,6 @@
   </div>
 
   <!-- 载入模块 JS (带版本号防手机端缓存) -->
-  <script type="module" src="js/app.js?v=2.2"></script>
+  <script type="module" src="js/app.js?v=2.3"></script>
 </body>
 </html>

@@ -1,37 +1,8 @@
 import { FRAMEWORKS, buildRoleplaySystemPrompt, buildCoachHintPrompt, buildEvaluationPrompt } from "../../lib/prompts.js";
 
-const DEFAULT_MODEL = "gemini-3.8-flash";
-
-function getServerKey(env) {
-  if (env && typeof env === "object") {
-    // 1. 直接匹配常见命名
-    const directKey = env.GEMINI_API_KEY 
-      || env.GOOGLE_API_KEY 
-      || env.GEMINI_KEY 
-      || env.GOOGLE_GEMINI_API_KEY;
-    if (directKey && typeof directKey === "string" && directKey.trim()) {
-      return directKey.trim();
-    }
-
-    // 2. 容错查找：防大小写或前后空格等
-    for (const [k, v] of Object.entries(env)) {
-      if (k.trim().toLowerCase().includes("gemini") && typeof v === "string" && v.trim()) {
-        return v.trim();
-      }
-    }
-  }
-
-  const globalKey = (typeof globalThis !== "undefined" && (globalThis.GEMINI_API_KEY || globalThis.GOOGLE_API_KEY))
-    || (typeof process !== "undefined" && (process?.env?.GEMINI_API_KEY || process?.env?.GOOGLE_API_KEY))
-    || "";
-  return typeof globalKey === "string" ? globalKey.trim() : "";
-}
-
-function getApiKey(request, env, reqBody) {
-  const clientKey = (reqBody && reqBody.apiKey && typeof reqBody.apiKey === "string") ? reqBody.apiKey.trim() : "";
-  if (clientKey) return clientKey;
-  return getServerKey(env);
-}
+const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
+const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
+const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 
 function getKeyPreview(key) {
   if (!key || key.length < 8) return "";
@@ -58,15 +29,214 @@ function getBaseUrl(env) {
   return "https://generativelanguage.googleapis.com";
 }
 
-// 统一调用 Google Gemini REST API (标准 Web Fetch，免任何 npm 依赖)
-async function callGeminiApi({ apiKey, model, contents, systemInstruction, temperature = 0.7, jsonMode = false, baseUrl = "https://generativelanguage.googleapis.com" }) {
-  if (!apiKey) {
-    throw new Error("未检测到 Google Gemini API Key。请在右上角“设置”中配置，或在 Cloudflare 环境变量中添加 GEMINI_API_KEY。");
+/**
+ * 智慧解析雙模 API 設定 (支援 DeepSeek 與 Google Gemini 自動適配)
+ */
+function resolveApiConfig(reqBody, env) {
+  const clientKey = (reqBody && reqBody.apiKey && typeof reqBody.apiKey === "string")
+    ? reqBody.apiKey.trim()
+    : ((reqBody && reqBody.userApiKey && typeof reqBody.userApiKey === "string") ? reqBody.userApiKey.trim() : "");
+
+  const requestedModel = (reqBody && reqBody.modelName && typeof reqBody.modelName === "string")
+    ? reqBody.modelName.trim()
+    : ((reqBody && reqBody.model && typeof reqBody.model === "string") ? reqBody.model.trim() : "");
+
+  // 1. 從環境變數提取金鑰
+  let deepseekEnvKey = "";
+  let geminiEnvKey = "";
+
+  if (env && typeof env === "object") {
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v !== "string" || !v.trim()) continue;
+      const upper = k.trim().toUpperCase();
+      if (upper === "DEEPSEEK_API_KEY" || upper === "DEEPSEEK_KEY") {
+        deepseekEnvKey = v.trim();
+      }
+      if (upper === "GEMINI_API_KEY" || upper === "GOOGLE_API_KEY" || upper === "GEMINI_KEY" || upper === "GOOGLE_GEMINI_API_KEY") {
+        geminiEnvKey = v.trim();
+      }
+    }
   }
 
-  const requestedModel = (model && model !== "gemini-2.5-flash") ? model : DEFAULT_MODEL;
+  // 本機開發環境相容 (process / globalThis)
+  if (!deepseekEnvKey) {
+    const gKey = (typeof globalThis !== "undefined" && (globalThis.DEEPSEEK_API_KEY || globalThis.DEEPSEEK_KEY))
+      || (typeof process !== "undefined" && (process?.env?.DEEPSEEK_API_KEY || process?.env?.DEEPSEEK_KEY)) || "";
+    if (typeof gKey === "string" && gKey.trim()) deepseekEnvKey = gKey.trim();
+  }
+  if (!geminiEnvKey) {
+    const gKey = (typeof globalThis !== "undefined" && (globalThis.GEMINI_API_KEY || globalThis.GOOGLE_API_KEY))
+      || (typeof process !== "undefined" && (process?.env?.GEMINI_API_KEY || process?.env?.GOOGLE_API_KEY)) || "";
+    if (typeof gKey === "string" && gKey.trim()) geminiEnvKey = gKey.trim();
+  }
+
+  // 2. 判斷 Provider 與生效金鑰
+  let provider = "gemini";
+  let apiKey = "";
+  let model = requestedModel;
+
+  if (clientKey) {
+    apiKey = clientKey;
+    // 使用者自備金鑰：依照前綴特徵與指定模型智慧判定
+    if (clientKey.startsWith("sk-") && !clientKey.startsWith("AIza")) {
+      provider = "deepseek";
+    } else if (clientKey.startsWith("AIza") || clientKey.startsWith("AQ.")) {
+      provider = "gemini";
+    } else if (requestedModel.startsWith("deepseek")) {
+      provider = "deepseek";
+    } else {
+      provider = "gemini";
+    }
+  } else {
+    // 伺服器端環境變數金鑰
+    if (requestedModel.startsWith("deepseek")) {
+      if (deepseekEnvKey) {
+        provider = "deepseek";
+        apiKey = deepseekEnvKey;
+      } else if (geminiEnvKey) {
+        provider = "gemini";
+        apiKey = geminiEnvKey;
+        model = DEFAULT_GEMINI_MODEL;
+      }
+    } else if (requestedModel.startsWith("gemini")) {
+      if (geminiEnvKey) {
+        provider = "gemini";
+        apiKey = geminiEnvKey;
+      } else if (deepseekEnvKey) {
+        provider = "deepseek";
+        apiKey = deepseekEnvKey;
+        model = DEFAULT_DEEPSEEK_MODEL;
+      }
+    } else {
+      // 未指定模型：若有 DEEPSEEK_API_KEY 優先支援 deepseek；若無則走 gemini
+      if (deepseekEnvKey && !geminiEnvKey) {
+        provider = "deepseek";
+        apiKey = deepseekEnvKey;
+      } else if (geminiEnvKey) {
+        provider = "gemini";
+        apiKey = geminiEnvKey;
+      } else if (deepseekEnvKey) {
+        provider = "deepseek";
+        apiKey = deepseekEnvKey;
+      }
+    }
+  }
+
+  // 補齊模型名稱預設值
+  if (!model) {
+    model = (provider === "deepseek") ? DEFAULT_DEEPSEEK_MODEL : DEFAULT_GEMINI_MODEL;
+  } else if (provider === "deepseek" && model.startsWith("gemini")) {
+    model = DEFAULT_DEEPSEEK_MODEL;
+  } else if (provider === "gemini" && model.startsWith("deepseek")) {
+    model = DEFAULT_GEMINI_MODEL;
+  }
+
+  return {
+    provider,
+    apiKey,
+    model,
+    clientKey,
+    isClientKey: !!clientKey,
+    hasServerDeepseek: !!deepseekEnvKey,
+    hasServerGemini: !!geminiEnvKey,
+    deepseekEnvKey,
+    geminiEnvKey,
+    serverDeepseekPreview: deepseekEnvKey ? getKeyPreview(deepseekEnvKey) : null,
+    serverGeminiPreview: geminiEnvKey ? getKeyPreview(geminiEnvKey) : null
+  };
+}
+
+/**
+ * 呼叫 DeepSeek 官方 REST API (標準 OpenAI 格式相容)
+ */
+async function callDeepSeekApi({ apiKey, model, systemInstruction, messages, temperature = 0.7, jsonMode = false, maxTokens = 2500 }) {
+  if (!apiKey) {
+    throw new Error("未檢測到 DeepSeek API Key。請在右上角“API 設置”填入 sk-... 密鑰，或在 Cloudflare Secrets 配置 DEEPSEEK_API_KEY。");
+  }
+
+  const targetModel = model || DEFAULT_DEEPSEEK_MODEL;
+  const formattedMessages = [];
+
+  if (systemInstruction) {
+    formattedMessages.push({
+      role: "system",
+      content: systemInstruction
+    });
+  }
+
+  if (Array.isArray(messages)) {
+    for (const m of messages) {
+      let text = "";
+      if (typeof m.content === "string") {
+        text = m.content;
+      } else if (Array.isArray(m.parts)) {
+        text = m.parts.map(p => p.text || "").join("\n");
+      }
+      const role = (m.role === "model" || m.role === "assistant") ? "assistant" : "user";
+      formattedMessages.push({ role, content: text });
+    }
+  }
+
+  const payload = {
+    model: targetModel,
+    messages: formattedMessages,
+    max_tokens: maxTokens
+  };
+
+  if (targetModel === "deepseek-reasoner") {
+    payload.max_tokens = 4096;
+  } else {
+    payload.temperature = temperature;
+    if (jsonMode) {
+      payload.response_format = { type: "json_object" };
+    }
+  }
+
+  const resp = await fetch(DEEPSEEK_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    let errMsg = `DeepSeek API 請求失敗 (${targetModel}: HTTP ${resp.status})`;
+    try {
+      const errJson = JSON.parse(errText);
+      if (errJson.error?.message) {
+        errMsg = `DeepSeek 錯誤: ${errJson.error.message}`;
+      }
+    } catch (_) {}
+    throw new Error(errMsg);
+  }
+
+  const data = await resp.json();
+  const choice = data.choices?.[0]?.message;
+  let rawText = (choice?.content && typeof choice.content === "string") ? choice.content.trim() : "";
+  if (!rawText && choice?.reasoning_content) {
+    rawText = choice.reasoning_content.trim();
+  }
+
+  if (!rawText) {
+    throw new Error(`DeepSeek API (${targetModel}) 返回內容為空`);
+  }
+
+  return rawText;
+}
+
+/**
+ * 呼叫 Google Gemini REST API (標準 Web Fetch，免任何 npm 依賴)
+ */
+async function callGeminiApi({ apiKey, model, contents, systemInstruction, temperature = 0.7, jsonMode = false, baseUrl = "https://generativelanguage.googleapis.com" }) {
+  if (!apiKey) {
+    throw new Error("未檢測到 Google Gemini API Key。請在右上角“API 設置”中配置，或在 Cloudflare 密鑰中添加 GEMINI_API_KEY。");
+  }
+
+  const requestedModel = (model && model !== "gemini-2.5-flash") ? model : DEFAULT_GEMINI_MODEL;
   
-  // 按照 Google 最新支持模型配置高可用轮询列表：gemini-3.6-flash 与 gemini-3.8-flash
   const modelCandidates = [requestedModel];
   if (!modelCandidates.includes("gemini-3.6-flash")) {
     modelCandidates.push("gemini-3.6-flash");
@@ -79,7 +249,7 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
   }
 
   let lastError = null;
-  const maxAttempts = 2; // 遇到区域限制或服务拥堵时自动重试
+  const maxAttempts = 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     for (let i = 0; i < modelCandidates.length; i++) {
       const currentModel = modelCandidates[i];
@@ -115,12 +285,12 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
         const resData = await resp.json();
 
         if (!resp.ok) {
-          let errMsg = resData.error?.message || "Google API 请求失败";
+          let errMsg = resData.error?.message || "Google API 請求失敗";
           const detailsStr = JSON.stringify(resData.error?.details || "");
           const isGeoBlocked = errMsg.includes("User location is not supported") || errMsg.includes("location is not supported");
           
           if (errMsg.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED") || detailsStr.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
-            errMsg = "Google API 认证失败 (ACCESS_TOKEN_TYPE_UNSUPPORTED)：当前填写的密钥不被 Generative Language API 接受。";
+            errMsg = "Google API 認證失敗 (ACCESS_TOKEN_TYPE_UNSUPPORTED)：當前填寫的密鑰不被 Generative Language API 接受。";
           }
           
           const isRetryable = isGeoBlocked || errMsg.includes("high demand") || errMsg.includes("no longer available") || resp.status === 503 || resp.status === 429;
@@ -133,7 +303,7 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
           }
           
           if (isGeoBlocked) {
-            errMsg = "本次对话偶发分配至 Cloudflare 香港(HKG)等节点，触碰 Google 区域限制 (User location is not supported)。请点击左下方“⏪ 撤回重试”重新发送即可！";
+            errMsg = "本次對話偶發分配至 Cloudflare 香港(HKG)等節點，觸碰 Google 區域限制 (User location is not supported)。請點擊左下方“⏪ 撤回重試”重新發送即可！";
           }
           throw new Error(errMsg);
         }
@@ -151,7 +321,7 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
           continue;
         }
         if (isGeoBlocked) {
-          throw new Error("本次对话偶发分配至 Cloudflare 香港(HKG)等节点，触碰 Google 区域限制 (User location is not supported)。请点击左下方“⏪ 撤回重试”重新发送即可！");
+          throw new Error("本次對話偶發分配至 Cloudflare 香港(HKG)等節點，觸碰 Google 區域限制 (User location is not supported)。請點擊左下方“⏪ 撤回重試”重新發送即可！");
         }
         throw err;
       }
@@ -161,12 +331,90 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
   throw lastError;
 }
 
+/**
+ * 統一執行 AI 請求 (支援 DeepSeek 與 Gemini 自動降級備援)
+ */
+async function executeAiTask({ config, systemInstruction, messages, temperature = 0.7, jsonMode = false, baseUrl }) {
+  const { provider, apiKey, model, geminiEnvKey, deepseekEnvKey } = config;
+
+  if (provider === "deepseek") {
+    try {
+      return await callDeepSeekApi({
+        apiKey,
+        model,
+        systemInstruction,
+        messages,
+        temperature,
+        jsonMode
+      });
+    } catch (deepseekErr) {
+      console.warn(`[Dual-Engine Fallback] DeepSeek 呼叫失敗: ${deepseekErr.message}`);
+      // 若有 Gemini 備援金鑰，自動切換至 Gemini 執行
+      const fallbackGeminiKey = geminiEnvKey;
+      if (fallbackGeminiKey) {
+        console.info("[Dual-Engine Fallback] 啟用 Google Gemini 自動備援...");
+        const contents = [];
+        for (const m of messages) {
+          let text = typeof m.content === "string" ? m.content : (Array.isArray(m.parts) ? m.parts.map(p => p.text).join("\n") : "");
+          const role = (m.role === "assistant" || m.role === "model") ? "model" : "user";
+          contents.push({ role, parts: [{ text }] });
+        }
+        return await callGeminiApi({
+          apiKey: fallbackGeminiKey,
+          model: DEFAULT_GEMINI_MODEL,
+          contents,
+          systemInstruction,
+          temperature,
+          jsonMode,
+          baseUrl
+        });
+      }
+      throw deepseekErr;
+    }
+  } else {
+    // 預設走 Google Gemini
+    try {
+      const contents = [];
+      for (const m of messages) {
+        let text = typeof m.content === "string" ? m.content : (Array.isArray(m.parts) ? m.parts.map(p => p.text).join("\n") : "");
+        const role = (m.role === "assistant" || m.role === "model") ? "model" : "user";
+        contents.push({ role, parts: [{ text }] });
+      }
+      return await callGeminiApi({
+        apiKey,
+        model,
+        contents,
+        systemInstruction,
+        temperature,
+        jsonMode,
+        baseUrl
+      });
+    } catch (geminiErr) {
+      console.warn(`[Dual-Engine Fallback] Gemini 呼叫失敗: ${geminiErr.message}`);
+      // 若遇到區域限制或故障，且有 DeepSeek 備援金鑰，自動切換至 DeepSeek
+      const fallbackDeepseekKey = deepseekEnvKey;
+      if (fallbackDeepseekKey) {
+        console.info("[Dual-Engine Fallback] 啟用 DeepSeek 自動備援...");
+        return await callDeepSeekApi({
+          apiKey: fallbackDeepseekKey,
+          model: DEFAULT_DEEPSEEK_MODEL,
+          systemInstruction,
+          messages,
+          temperature,
+          jsonMode
+        });
+      }
+      throw geminiErr;
+    }
+  }
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const pathname = url.pathname;
 
-  // 处理 OPTIONS 预检请求
+  // 處理 OPTIONS 預檢請求
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -180,16 +428,25 @@ export async function onRequest(context) {
 
   // 1. GET /api/frameworks
   if (pathname.endsWith("/frameworks") && request.method === "GET") {
-    const serverKey = getServerKey(env);
-    const isValidFormat = serverKey.startsWith("AIzaSy") || serverKey.startsWith("AQ.");
+    const config = resolveApiConfig({}, env);
+    const providers = [];
+    if (config.hasServerGemini) providers.push("gemini");
+    if (config.hasServerDeepseek) providers.push("deepseek");
+
     const envKeys = env ? Object.keys(env).filter(k => k !== "ASSETS") : [];
+
     return jsonResponse({
       ok: true,
       frameworks: FRAMEWORKS,
-      defaultModel: DEFAULT_MODEL,
-      hasServerKey: !!serverKey,
-      serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
-      isServerKeyValidFormat: isValidFormat,
+      defaultModel: config.hasServerDeepseek && !config.hasServerGemini ? DEFAULT_DEEPSEEK_MODEL : DEFAULT_GEMINI_MODEL,
+      hasServerKey: config.hasServerGemini || config.hasServerDeepseek,
+      hasServerGemini: config.hasServerGemini,
+      hasServerDeepseek: config.hasServerDeepseek,
+      serverKeyPreview: config.serverGeminiPreview || config.serverDeepseekPreview,
+      serverGeminiPreview: config.serverGeminiPreview,
+      serverDeepseekPreview: config.serverDeepseekPreview,
+      isServerKeyValidFormat: true,
+      providers: providers.length > 0 ? providers : ["gemini", "deepseek"],
       envKeys
     });
   }
@@ -206,36 +463,55 @@ export async function onRequest(context) {
     body = {};
   }
 
-  const apiKey = getApiKey(request, env, body);
+  const config = resolveApiConfig(body, env);
   const baseUrl = getBaseUrl(env);
 
   // 2. POST /api/test-key
   if (pathname.endsWith("/test-key")) {
     try {
-      const isClientKey = !!(body.apiKey && body.apiKey.trim());
-      const usedKey = isClientKey ? body.apiKey.trim() : getServerKey(env);
+      const isClientKey = config.isClientKey;
+      const effectiveKey = config.apiKey;
 
-      if (!usedKey) {
+      if (!effectiveKey) {
         return jsonResponse({
           ok: false,
-          error: "未检测到任何 API Key。手机端未输入，且云端环境变量 GEMINI_API_KEY 也未设置。"
+          error: "未檢測到任何 API Key。手機端未輸入，且雲端環境變數 (GEMINI_API_KEY / DEEPSEEK_API_KEY) 也未設置。"
         }, 400);
       }
 
-      const output = await callGeminiApi({
-        apiKey: usedKey,
-        model: body.modelName,
-        contents: [{ parts: [{ text: "Ping" }] }],
-        baseUrl
-      });
+      if (config.provider === "deepseek") {
+        const output = await callDeepSeekApi({
+          apiKey: effectiveKey,
+          model: config.model,
+          messages: [{ role: "user", content: "Ping" }],
+          maxTokens: 20
+        });
 
-      const keySource = isClientKey ? "客户端自定义 Key" : "Cloudflare 云端全局 Key";
-      return jsonResponse({
-        ok: true,
-        message: isClientKey ? "✅ 个人 API Key 测试成功！" : "✅ 云端全局 API Key 验证成功！所有学生无需配置即可直接使用。",
-        keySource,
-        details: { ok: true, output }
-      });
+        const keySource = isClientKey ? "客戶端自定義 DeepSeek Key" : "Cloudflare 雲端全局 DeepSeek Key";
+        return jsonResponse({
+          ok: true,
+          message: isClientKey ? `✅ 個人 DeepSeek API Key (${config.model}) 測試成功！` : `✅ 雲端全局 DeepSeek API Key 驗證成功！`,
+          provider: "deepseek",
+          keySource,
+          details: { ok: true, provider: "deepseek", model: config.model, output }
+        });
+      } else {
+        const output = await callGeminiApi({
+          apiKey: effectiveKey,
+          model: config.model,
+          contents: [{ parts: [{ text: "Ping" }] }],
+          baseUrl
+        });
+
+        const keySource = isClientKey ? "客戶端自定義 Google Gemini Key" : "Cloudflare 雲端全局 Gemini Key";
+        return jsonResponse({
+          ok: true,
+          message: isClientKey ? `✅ 個人 Gemini API Key (${config.model}) 測試成功！` : `✅ 雲端全局 Gemini API Key 驗證成功！所有學生無需配置即可直接使用。`,
+          provider: "gemini",
+          keySource,
+          details: { ok: true, provider: "gemini", model: config.model, output }
+        });
+      }
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 400);
     }
@@ -244,36 +520,35 @@ export async function onRequest(context) {
   // 3. POST /api/chat
   if (pathname.endsWith("/chat")) {
     try {
-      const { targetConfig, history, userMessage, modelName } = body;
+      const { targetConfig, history, userMessage } = body;
       if (!targetConfig) {
-        return jsonResponse({ ok: false, error: "缺少 targetConfig 设置" }, 400);
+        return jsonResponse({ ok: false, error: "缺少 targetConfig 設置" }, 400);
       }
 
       const systemInstruction = buildRoleplaySystemPrompt(targetConfig);
 
-      const contents = [];
+      const messages = [];
       if (Array.isArray(history)) {
         for (const item of history) {
           if (!item.content) continue;
-          contents.push({
-            role: item.role === "user" ? "user" : "model",
-            parts: [{ text: item.content }]
+          messages.push({
+            role: item.role === "user" ? "user" : "assistant",
+            content: item.content
           });
         }
       }
 
       if (userMessage && userMessage.trim()) {
-        contents.push({
+        messages.push({
           role: "user",
-          parts: [{ text: userMessage.trim() }]
+          content: userMessage.trim()
         });
       }
 
-      const fullText = await callGeminiApi({
-        apiKey,
-        model: modelName,
-        contents,
+      const fullText = await executeAiTask({
+        config,
         systemInstruction,
+        messages,
         temperature: 0.8,
         baseUrl
       });
@@ -291,7 +566,9 @@ export async function onRequest(context) {
         reply: {
           text: cleanText,
           innerThought,
-          raw: fullText
+          raw: fullText,
+          provider: config.provider,
+          model: config.model
         }
       });
     } catch (err) {
@@ -302,14 +579,14 @@ export async function onRequest(context) {
   // 4. POST /api/hint
   if (pathname.endsWith("/hint")) {
     try {
-      const { targetConfig, history, modelName } = body;
+      const { targetConfig, history } = body;
       if (!targetConfig) {
-        return jsonResponse({ ok: false, error: "缺少 targetConfig 设置" }, 400);
+        return jsonResponse({ ok: false, error: "缺少 targetConfig 設置" }, 400);
       }
 
       const transcript = (history || [])
         .map((item, idx) => {
-          const speaker = item.role === "user" ? "【使用者/教练】" : ("【练习对象 " + (targetConfig.targetName || "对象") + "】");
+          const speaker = item.role === "user" ? "【使用者/教練】" : ("【練習對象 " + (targetConfig.targetName || "對象") + "】");
           return (idx + 1) + ". " + speaker + ": " + item.content;
         })
         .join("\n");
@@ -320,18 +597,18 @@ export async function onRequest(context) {
         targetName: targetConfig.targetName,
         targetRole: targetConfig.targetRole,
         scenario: targetConfig.scenario,
-        transcript: transcript || "（刚开始对话，尚未有实质来回）"
+        transcript: transcript || "（剛開始對話，尚未有實質來回）"
       });
 
-      const hintText = await callGeminiApi({
-        apiKey,
-        model: modelName,
-        contents: [{ parts: [{ text: prompt }] }],
+      const hintText = await executeAiTask({
+        config,
+        systemInstruction: "你是一位資深的高級教練督導（Master Certified Coach）。請提供犀利且溫暖的引導錦囊。",
+        messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
         baseUrl
       });
 
-      return jsonResponse({ ok: true, hint: hintText });
+      return jsonResponse({ ok: true, hint: hintText, provider: config.provider, model: config.model });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }
@@ -340,15 +617,15 @@ export async function onRequest(context) {
   // 5. POST /api/evaluate
   if (pathname.endsWith("/evaluate")) {
     try {
-      const { targetConfig, history, modelName } = body;
+      const { targetConfig, history } = body;
       if (!targetConfig || !Array.isArray(history) || history.length === 0) {
-        return jsonResponse({ ok: false, error: "对话记录不足，请先进行至少 1~2 回合对话后再进行评估" }, 400);
+        return jsonResponse({ ok: false, error: "對話記錄不足，請先進行至少 1~2 回合對話後再進行評估" }, 400);
       }
 
       const transcript = (history || [])
         .map((item, idx) => {
-          const speaker = item.role === "user" ? "【使用者/教练】" : ("【练习对象 " + (targetConfig.targetName || "对象") + "】");
-          return "第 " + (idx + 1) + " 轮 " + speaker + "：\n" + item.content + "\n";
+          const speaker = item.role === "user" ? "【使用者/教練】" : ("【練習對象 " + (targetConfig.targetName || "對象") + "】");
+          return "第 " + (idx + 1) + " 輪 " + speaker + "：\n" + item.content + "\n";
         })
         .join("\n--------------------\n");
 
@@ -359,14 +636,14 @@ export async function onRequest(context) {
         targetRole: targetConfig.targetRole,
         scenario: targetConfig.scenario,
         difficulty: targetConfig.difficulty,
-        transcript: transcript || "（无对话记录）"
+        transcript: transcript || "（無對話記錄）"
       });
 
-      const rawJson = await callGeminiApi({
-        apiKey,
-        model: modelName,
-        contents: [{ parts: [{ text: prompt }] }],
-        temperature: 0.4,
+      const rawJson = await executeAiTask({
+        config,
+        systemInstruction: "你是一位專業的高級教練考評考官。請務必嚴格以標準 JSON 格式輸出評估結果，不要附帶任何多餘文字。",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
         jsonMode: true,
         baseUrl
       });
@@ -376,52 +653,61 @@ export async function onRequest(context) {
         const cleaned = rawJson.replace(/^[\s\S]*?```json\s*/i, "").replace(/```[\s\S]*?$/i, "").trim();
         reportData = JSON.parse(cleaned);
       } catch (err) {
-        reportData = {
-          overallScore: 78,
-          overallLevel: "具备雏形",
-          dimensionScores: {
-            frameworkProficiency: 75,
-            empathyListening: 80,
-            powerfulQuestioning: 75,
-            psychologicalSafety: 80,
-            forwardMomentum: 70
-          },
-          summary: "本次练习展现了良好的沟通诚意与共情意图，但在问题挖掘深度与提问句型上仍有进一步精进的空间。",
-          strengths: [
-            {
-              title: "保持稳定温和的对话姿态",
-              quote: "（参考对话整体氛围）",
-              analysis: "面对对象的防卫反应，能维持开放平静的口吻，有助于维系基本的沟通渠道。"
-            }
-          ],
-          growthAreas: [
-            {
-              title: "避免封闭式提问，强化开放式探索",
-              quote: "（参考对话中的疑问句）",
-              impact: "有时过早提出解决方案或是非题，限制了对象主动分享内在感受的空间。",
-              betterAlternative: "“听起来这件事让你感到有些吃力，想和你了解看看，在那个当下发生了什么事呢？”",
-              rationale: "以不带评判的开放式提问邀请对方还原现场，降低对象被质问的戒心。"
-            }
-          ],
-          frameworkDeepDive: {
-            frameworkName: targetConfig.frameworkId || "沟通模式",
-            stageAnalysis: "已初步实践倾听与确认，若能更进一步探寻深层需求或冰山底层，效果将更显著。",
-            keyTakeaway: "慢即是快。先连接情感，再处理事情。"
-          },
-          deliberatePracticeTips: [
-            "练习将“你为什么…”替换为“想多了解发生了什么…”",
-            "在给出任何建议前，先确认对方三种不同的感受与需要",
-            "适度留白 3~5 秒，给对象沉淀思绪的空间"
-          ],
-          rawTextFallback: rawJson
-        };
+        const matched = rawJson.match(/\{[\s\S]*\}/);
+        if (matched) {
+          try {
+            reportData = JSON.parse(matched[0]);
+          } catch (_) {}
+        }
+
+        if (!reportData) {
+          reportData = {
+            overallScore: 78,
+            overallLevel: "具備雛形",
+            dimensionScores: {
+              frameworkProficiency: 75,
+              empathyListening: 80,
+              powerfulQuestioning: 75,
+              psychologicalSafety: 80,
+              forwardMomentum: 70
+            },
+            summary: "本次練習展現了良好的溝通誠意與共情意圖，但在問題挖掘深度與提問句型上仍有進一步精進的空間。",
+            strengths: [
+              {
+                title: "保持穩定溫和的對話姿態",
+                quote: "（參考對話整體氛圍）",
+                analysis: "面對對象的防衛反應，能維持開放平靜的口吻，有助於維繫基本的溝通渠道。"
+              }
+            ],
+            growthAreas: [
+              {
+                title: "避免封閉式提問，強化開放式探索",
+                quote: "（參考對話中的疑問句）",
+                impact: "有時過早提出解決方案或是非題，限制了對象主動分享內在感受的空間。",
+                betterAlternative: "“聽起來這件事讓你感到有些吃力，想和你了解看看，在那個當下發生了什麼事呢？”",
+                rationale: "以不帶評判的開放式提問邀請對方還原現場，降低對象被質問的戒心。"
+              }
+            ],
+            frameworkDeepDive: {
+              frameworkName: targetConfig.frameworkId || "溝通模式",
+              stageAnalysis: "已初步實踐傾聽與確認，若能更進一步探尋深層需求或冰山底層，效果將更顯著。",
+              keyTakeaway: "慢即是快。先連接情感，再處理事情。"
+            },
+            deliberatePracticeTips: [
+              "練習將“你為什麼…”替換為“想多了解發生了什麼…”",
+              "在給出任何建議前，先確認對方三種不同的感受與需要",
+              "適度留白 3~5 秒，給對象沉澱思緒的空間"
+            ],
+            rawTextFallback: rawJson
+          };
+        }
       }
 
-      return jsonResponse({ ok: true, report: reportData });
+      return jsonResponse({ ok: true, report: reportData, provider: config.provider, model: config.model });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }
   }
 
-  return jsonResponse({ ok: false, error: "未找到对应的 API 路径" }, 404);
+  return jsonResponse({ ok: false, error: "未找到對應的 API 路徑" }, 404);
 }

@@ -9,11 +9,15 @@ const state = {
   chatHistory: [],
   evaluationReport: null,
   isWaitingForAI: false,
-  apiKey: localStorage.getItem("gemini_api_key") || "",
-  geminiModel: localStorage.getItem("gemini_model") || "gemini-3.6-flash",
+  apiKey: localStorage.getItem("coachlab_api_key") || localStorage.getItem("gemini_api_key") || "",
+  geminiModel: localStorage.getItem("coachlab_model") || localStorage.getItem("gemini_model") || "gemini-3.6-flash",
   hasServerKey: false,
+  hasServerGemini: false,
+  hasServerDeepseek: false,
+  serverGeminiPreview: null,
+  serverDeepseekPreview: null,
   serverKeyPreview: null,
-  isServerKeyValidFormat: false,
+  isServerKeyValidFormat: true,
   practiceHistory: JSON.parse(localStorage.getItem("coachlab_history") || "[]")
 };
 
@@ -128,9 +132,13 @@ async function checkServerStatus() {
     const data = await res.json();
     if (data.ok) {
       state.hasServerKey = !!data.hasServerKey;
+      state.hasServerGemini = !!data.hasServerGemini;
+      state.hasServerDeepseek = !!data.hasServerDeepseek;
+      state.serverGeminiPreview = data.serverGeminiPreview || null;
+      state.serverDeepseekPreview = data.serverDeepseekPreview || null;
       state.serverKeyPreview = data.serverKeyPreview || null;
       state.isServerKeyValidFormat = !!data.isServerKeyValidFormat;
-      if (data.defaultModel && !localStorage.getItem("gemini_model")) {
+      if (data.defaultModel && !localStorage.getItem("coachlab_model") && !localStorage.getItem("gemini_model")) {
         state.geminiModel = data.defaultModel;
         elements.selectGeminiModel.value = data.defaultModel;
       }
@@ -149,24 +157,25 @@ function updateServerKeyBannerUI() {
   if (!elements.serverKeyIndicator || !elements.serverKeyStatusText) return;
 
   if (state.hasServerKey) {
-    if (state.isServerKeyValidFormat) {
-      elements.serverKeyIndicator.className = "server-key-banner server-key-active";
-      elements.serverKeyStatusText.innerHTML = `
-        <span><strong>✅ 云端全局 API Key 已就绪</strong>（${state.serverKeyPreview || "已配置"}）<br>
-        <span style="font-size: 0.8rem; opacity: 0.9;">所有学生/手机端留空即可直接使用，无需任何配置！</span></span>
-      `;
-    } else {
-      elements.serverKeyIndicator.className = "server-key-banner server-key-invalid";
-      elements.serverKeyStatusText.innerHTML = `
-        <span><strong>⚠️ 云端 GEMINI_API_KEY 格式异常</strong>（当前值：<code>${state.serverKeyPreview}</code>）<br>
-        <span style="font-size: 0.8rem;">请前往 Cloudflare 控制台检查环境变量，确保填入以 <code>AIzaSy</code> 或 <code>AQ.</code> 开头的有效 Key。</span></span>
-      `;
+    elements.serverKeyIndicator.className = "server-key-banner server-key-active";
+    const statusBadges = [];
+    if (state.hasServerDeepseek) {
+      statusBadges.push(`🟢 DeepSeek (${state.serverDeepseekPreview || "已就绪"})`);
     }
+    if (state.hasServerGemini) {
+      statusBadges.push(`🔵 Google Gemini (${state.serverGeminiPreview || "已就绪"})`);
+    }
+    const engineText = statusBadges.length > 0 ? statusBadges.join(" ｜ ") : (state.serverKeyPreview || "已配置");
+
+    elements.serverKeyStatusText.innerHTML = `
+      <span><strong>✅ 云端全局 API 密钥已就绪</strong>（${engineText}）<br>
+      <span style="font-size: 0.8rem; opacity: 0.9;">全班学员手机/电脑端留空即可直接使用，无需任何配置！</span></span>
+    `;
   } else {
     elements.serverKeyIndicator.className = "server-key-banner server-key-none";
     elements.serverKeyStatusText.innerHTML = `
-      <span><strong>ℹ️ 云端暂未检测到 GEMINI_API_KEY</strong><br>
-      <span style="font-size: 0.8rem;">学生端可在下方填入个人 API Key，或由管理员在 Cloudflare 环境变量中添加全局 Key。</span></span>
+      <span><strong>ℹ️ 云端暂未检测到全局 API 密钥</strong><br>
+      <span style="font-size: 0.8rem;">学生端可在下方填入个人 API Key（支持 DeepSeek 或 Gemini），或由管理员在 Cloudflare 环境变量中添加全局密钥。</span></span>
     `;
   }
 }
@@ -175,13 +184,22 @@ function updateServerKeyBannerUI() {
  * 更新顶部密钥指示灯
  */
 function updateKeyStatusUI() {
-  const hasKey = !!state.apiKey || (state.hasServerKey && state.isServerKeyValidFormat);
+  const hasKey = !!state.apiKey || state.hasServerKey;
   if (hasKey) {
     elements.keyStatusDot.className = "status-dot dot-ok";
-    elements.keyStatusDot.title = state.apiKey ? "已设置客户端专属 API Key" : "云端全局 API Key 生效中（学生可直接使用）";
-  } else if (state.hasServerKey && !state.isServerKeyValidFormat) {
-    elements.keyStatusDot.className = "status-dot dot-warn";
-    elements.keyStatusDot.title = "云端 API Key 格式异常（非 AIzaSy 开头）";
+    let desc = "云端全局 API Key 生效中（学生可直接使用）";
+    if (state.apiKey) {
+      desc = state.apiKey.startsWith("sk-") ? "已设置客户端专属 DeepSeek Key" : "已设置客户端专属 Gemini Key";
+    } else {
+      if (state.hasServerDeepseek && state.hasServerGemini) {
+        desc = "云端全局 DeepSeek + Gemini 双模就绪";
+      } else if (state.hasServerDeepseek) {
+        desc = "云端全局 DeepSeek 生效中";
+      } else if (state.hasServerGemini) {
+        desc = "云端全局 Gemini 生效中";
+      }
+    }
+    elements.keyStatusDot.title = desc;
   } else {
     elements.keyStatusDot.className = "status-dot dot-warn";
     elements.keyStatusDot.title = "尚未设置 API Key，点击右上角设置以配置";
@@ -333,7 +351,7 @@ async function startPractice() {
   if (!state.apiKey && !state.hasServerKey) {
     showSettingsModal();
     elements.testKeyResult.className = "test-result-box test-error";
-    elements.testKeyResult.textContent = "未检测到 API Key。请在下方填入您的 Google Gemini API Key，或由管理员在 Cloudflare 环境变量中配置 GEMINI_API_KEY。";
+    elements.testKeyResult.textContent = "未检测到 API Key。请在下方填入您的 DeepSeek (sk-...) 或 Google Gemini API Key，或由管理员在云端配置全局密钥。";
     elements.testKeyResult.classList.remove("hidden");
     return;
   }
@@ -904,10 +922,11 @@ function showSettingsModal() {
   elements.inputApiKey.value = state.apiKey;
   elements.selectGeminiModel.value = state.geminiModel;
   elements.testKeyResult.classList.add("hidden");
-  if (state.hasServerKey && state.isServerKeyValidFormat) {
-    elements.inputApiKey.placeholder = `（已生效云端全局 Key ${state.serverKeyPreview || ""}，留空即可）`;
+  if (state.hasServerKey) {
+    const preview = state.serverDeepseekPreview || state.serverGeminiPreview || state.serverKeyPreview || "";
+    elements.inputApiKey.placeholder = `（已生效云端全局 Key ${preview}，留空即可）`;
   } else {
-    elements.inputApiKey.placeholder = "AIzaSy...";
+    elements.inputApiKey.placeholder = "sk-... (DeepSeek) 或 AIzaSy... (Gemini)";
   }
   updateServerKeyBannerUI();
   checkServerStatus(); // 异步刷新最新云端配置
@@ -947,29 +966,51 @@ function bindEvents() {
   elements.btnCloseHistory.addEventListener("click", hideModals);
   elements.btnDismissHistory.addEventListener("click", hideModals);
 
-  // Settings 密钥操作
+  // Settings 密钥操作与智能识别
   elements.btnToggleKeyVisibility.addEventListener("click", () => {
     const input = elements.inputApiKey;
     input.type = input.type === "password" ? "text" : "password";
   });
 
+  // 输入密钥时自动智能切换推荐模型引擎
+  elements.inputApiKey.addEventListener("input", (e) => {
+    const val = e.target.value.trim();
+    if (val.startsWith("sk-") && !val.startsWith("AIza")) {
+      if (!elements.selectGeminiModel.value.startsWith("deepseek")) {
+        elements.selectGeminiModel.value = "deepseek-chat";
+      }
+    } else if (val.startsWith("AIza") || val.startsWith("AQ.")) {
+      if (elements.selectGeminiModel.value.startsWith("deepseek")) {
+        elements.selectGeminiModel.value = "gemini-3.6-flash";
+      }
+    }
+  });
+
   elements.btnSaveSettings.addEventListener("click", () => {
     state.apiKey = elements.inputApiKey.value.trim();
     state.geminiModel = elements.selectGeminiModel.value;
+    localStorage.setItem("coachlab_api_key", state.apiKey);
     localStorage.setItem("gemini_api_key", state.apiKey);
+    localStorage.setItem("coachlab_model", state.geminiModel);
     localStorage.setItem("gemini_model", state.geminiModel);
     updateKeyStatusUI();
     hideModals();
-    alert("设置已保存！" + (state.apiKey ? "（将优先使用您设置的专属 API Key）" : "（将使用云端全局配置）"));
+
+    const isDeepSeek = state.apiKey.startsWith("sk-") || state.geminiModel.startsWith("deepseek");
+    const engineName = isDeepSeek ? "🟢 DeepSeek" : "🔵 Google Gemini";
+    alert(`设置已保存！\n当前引擎：${engineName}\n使用模型：${state.geminiModel}\n` + (state.apiKey ? "（将优先使用您设置的专属 API Key）" : "（将使用云端全局配置）"));
   });
 
   elements.btnTestConnection.addEventListener("click", async () => {
     const testKey = elements.inputApiKey.value.trim();
     const model = elements.selectGeminiModel.value;
+    const isDeepSeek = testKey.startsWith("sk-") || model.startsWith("deepseek");
+    const engineName = isDeepSeek ? "DeepSeek" : "Google Gemini";
+
     elements.testKeyResult.className = "test-result-box";
     elements.testKeyResult.textContent = testKey 
-      ? "正在测试客户端自定义 API Key..." 
-      : "输入框为空，正在测试 Cloudflare 云端全局 API Key...";
+      ? `正在测试客户端自定义 ${engineName} API Key (${model})...` 
+      : `输入框为空，正在测试云端全局 ${engineName} API Key (${model})...`;
     elements.testKeyResult.classList.remove("hidden");
 
     try {
@@ -981,7 +1022,7 @@ function bindEvents() {
       const data = await res.json();
       if (data.ok) {
         elements.testKeyResult.className = "test-result-box test-success";
-        elements.testKeyResult.textContent = data.message || "✅ 连接成功！Google AI API 运行正常。";
+        elements.testKeyResult.textContent = data.message || `✅ 连接成功！${engineName} 运行正常。`;
         // 刷新一次云端状态
         await checkServerStatus();
       } else {

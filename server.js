@@ -11,6 +11,13 @@ import {
   generateEvaluationReport,
   getDefaultModel
 } from "./lib/gemini.js";
+import {
+  testDeepSeekKey,
+  generateDeepSeekRoleplayResponse,
+  generateDeepSeekCoachHint,
+  generateDeepSeekEvaluationReport,
+  DEFAULT_DEEPSEEK_MODEL
+} from "./lib/deepseek.js";
 
 dotenv.config();
 
@@ -29,101 +36,178 @@ function getKeyPreview(key) {
   return key.slice(0, 6) + "..." + key.slice(-4);
 }
 
+function resolveProvider(apiKey, modelName) {
+  const cleanKey = (apiKey && typeof apiKey === "string") ? apiKey.trim() : "";
+  const cleanModel = (modelName && typeof modelName === "string") ? modelName.trim().toLowerCase() : "";
+
+  if (cleanKey.startsWith("sk-") && !cleanKey.startsWith("AIza")) {
+    return "deepseek";
+  }
+  if (cleanKey.startsWith("AIza") || cleanKey.startsWith("AQ.")) {
+    return "gemini";
+  }
+  if (cleanModel.startsWith("deepseek")) {
+    return "deepseek";
+  }
+  if (cleanModel.startsWith("gemini")) {
+    return "gemini";
+  }
+
+  // 伺服器端環境變數
+  if (process.env.DEEPSEEK_API_KEY && !process.env.GEMINI_API_KEY) {
+    return "deepseek";
+  }
+  return "gemini";
+}
+
 /**
- * 取得支援的理论框架列表
+ * 取得支援的理論框架列表與雙引擎金鑰狀態
  */
 app.get("/api/frameworks", (req, res) => {
-  const serverKey = process.env.GEMINI_API_KEY || "";
-  const isValidFormat = serverKey.startsWith("AIzaSy") || serverKey.startsWith("AQ.");
+  const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim();
+  const deepseekKey = (process.env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_KEY || "").trim();
+
+  const isValidGemini = geminiKey.startsWith("AIzaSy") || geminiKey.startsWith("AQ.");
+  const isValidDeepseek = deepseekKey.startsWith("sk-");
+
+  const providers = [];
+  if (geminiKey) providers.push("gemini");
+  if (deepseekKey) providers.push("deepseek");
+
+  const defaultModel = deepseekKey && !geminiKey ? DEFAULT_DEEPSEEK_MODEL : getDefaultModel();
+
   res.json({
     ok: true,
     frameworks: FRAMEWORKS,
-    defaultModel: getDefaultModel(),
-    hasServerKey: !!serverKey,
-    serverKeyPreview: serverKey ? getKeyPreview(serverKey) : null,
-    isServerKeyValidFormat: isValidFormat
+    defaultModel,
+    hasServerKey: !!(geminiKey || deepseekKey),
+    hasServerGemini: !!geminiKey,
+    hasServerDeepseek: !!deepseekKey,
+    serverKeyPreview: geminiKey ? getKeyPreview(geminiKey) : (deepseekKey ? getKeyPreview(deepseekKey) : null),
+    serverGeminiPreview: geminiKey ? getKeyPreview(geminiKey) : null,
+    serverDeepseekPreview: deepseekKey ? getKeyPreview(deepseekKey) : null,
+    isServerKeyValidFormat: isValidGemini || isValidDeepseek,
+    providers: providers.length > 0 ? providers : ["gemini", "deepseek"]
   });
 });
 
 /**
- * 测试 API Key 有效性
+ * 測試 API Key 有效性 (自動適配 DeepSeek 或 Google Gemini)
  */
 app.post("/api/test-key", async (req, res) => {
   try {
     const { apiKey, modelName } = req.body;
     const isClientKey = !!(apiKey && apiKey.trim());
-    const result = await testGeminiKey(apiKey, modelName);
-    res.json({
-      ok: true,
-      message: isClientKey ? "✅ 个人 API Key 测试成功！" : "✅ 服务器全局 API Key 验证成功！所有用户无需配置即可使用。",
-      details: result
-    });
+    const provider = resolveProvider(apiKey, modelName);
+
+    if (provider === "deepseek") {
+      const result = await testDeepSeekKey(apiKey, modelName);
+      res.json({
+        ok: true,
+        provider: "deepseek",
+        message: isClientKey ? `✅ 個人 DeepSeek API Key (${result.model}) 測試成功！` : `✅ 伺服器全局 DeepSeek API Key 驗證成功！`,
+        details: result
+      });
+    } else {
+      const result = await testGeminiKey(apiKey, modelName);
+      res.json({
+        ok: true,
+        provider: "gemini",
+        message: isClientKey ? `✅ 個人 Gemini API Key (${result.model}) 測試成功！` : `✅ 伺服器全局 Gemini API Key 驗證成功！所有用戶無需配置即可使用。`,
+        details: result
+      });
+    }
   } catch (error) {
     console.error("Test API Key Error:", error.message);
     res.status(400).json({
       ok: false,
-      error: error.message || "API 连接失败，请检查密钥与网络连接"
+      error: error.message || "API 連線失敗，請檢查金鑰與網路連線"
     });
   }
 });
 
 /**
- * 角色扮演对话交互
+ * 角色扮演對話交互 (支援 DeepSeek / Gemini)
  */
 app.post("/api/chat", async (req, res) => {
   try {
     const { apiKey, targetConfig, history, userMessage, modelName } = req.body;
     if (!targetConfig) {
-      return res.status(400).json({ ok: false, error: "缺少 targetConfig 角色与情境设置" });
+      return res.status(400).json({ ok: false, error: "缺少 targetConfig 角色與情境設定" });
     }
 
-    const result = await generateRoleplayResponse({
-      apiKey,
-      targetConfig,
-      history: history || [],
-      userMessage: userMessage || "",
-      modelName
-    });
+    const provider = resolveProvider(apiKey, modelName);
+    let result;
 
-    res.json({ ok: true, reply: result });
+    if (provider === "deepseek") {
+      result = await generateDeepSeekRoleplayResponse({
+        apiKey,
+        targetConfig,
+        history: history || [],
+        userMessage: userMessage || "",
+        modelName: modelName || DEFAULT_DEEPSEEK_MODEL
+      });
+    } else {
+      result = await generateRoleplayResponse({
+        apiKey,
+        targetConfig,
+        history: history || [],
+        userMessage: userMessage || "",
+        modelName: modelName || getDefaultModel()
+      });
+    }
+
+    res.json({ ok: true, reply: result, provider });
   } catch (error) {
     console.error("Chat Error:", error.message);
     res.status(500).json({
       ok: false,
-      error: error.message || "生成对话回应失败"
+      error: error.message || "生成對話回應失敗"
     });
   }
 });
 
 /**
- * 取得即时教练锦囊提示
+ * 取得即時教練錦囊提示 (支援 DeepSeek / Gemini)
  */
 app.post("/api/hint", async (req, res) => {
   try {
     const { apiKey, targetConfig, history, modelName } = req.body;
     if (!targetConfig) {
-      return res.status(400).json({ ok: false, error: "缺少 targetConfig 设置" });
+      return res.status(400).json({ ok: false, error: "缺少 targetConfig 設定" });
     }
 
-    const result = await generateCoachHint({
-      apiKey,
-      targetConfig,
-      history: history || [],
-      modelName
-    });
+    const provider = resolveProvider(apiKey, modelName);
+    let result;
 
-    res.json({ ok: true, hint: result.hint });
+    if (provider === "deepseek") {
+      result = await generateDeepSeekCoachHint({
+        apiKey,
+        targetConfig,
+        history: history || [],
+        modelName: modelName || DEFAULT_DEEPSEEK_MODEL
+      });
+    } else {
+      result = await generateCoachHint({
+        apiKey,
+        targetConfig,
+        history: history || [],
+        modelName: modelName || getDefaultModel()
+      });
+    }
+
+    res.json({ ok: true, hint: result.hint, provider });
   } catch (error) {
     console.error("Hint Error:", error.message);
     res.status(500).json({
       ok: false,
-      error: error.message || "取得教练锦囊失败"
+      error: error.message || "取得教練錦囊失敗"
     });
   }
 });
 
 /**
- * 产生练习后全方位评估报告
+ * 產生練習後全方位評估報告 (支援 DeepSeek / Gemini)
  */
 app.post("/api/evaluate", async (req, res) => {
   try {
@@ -131,33 +215,47 @@ app.post("/api/evaluate", async (req, res) => {
     if (!targetConfig || !Array.isArray(history) || history.length === 0) {
       return res.status(400).json({
         ok: false,
-        error: "对话记录不足，请先进行至少 1~2 回合对话后再进行评估"
+        error: "對話記錄不足，請先進行至少 1~2 回合對話後再進行評估"
       });
     }
 
-    const report = await generateEvaluationReport({
-      apiKey,
-      targetConfig,
-      history,
-      modelName
-    });
+    const provider = resolveProvider(apiKey, modelName);
+    let report;
 
-    res.json({ ok: true, report });
+    if (provider === "deepseek") {
+      report = await generateDeepSeekEvaluationReport({
+        apiKey,
+        targetConfig,
+        history,
+        modelName: modelName || DEFAULT_DEEPSEEK_MODEL
+      });
+    } else {
+      report = await generateEvaluationReport({
+        apiKey,
+        targetConfig,
+        history,
+        modelName: modelName || getDefaultModel()
+      });
+    }
+
+    res.json({ ok: true, report, provider });
   } catch (error) {
     console.error("Evaluation Error:", error.message);
     res.status(500).json({
       ok: false,
-      error: error.message || "生成评估报告失败"
+      error: error.message || "生成評估報告失敗"
     });
   }
 });
 
-// 启动服务器
+// 啟動伺服器
 app.listen(PORT, () => {
   console.log(`=================================================`);
-  console.log(`🚀 CoachLab 对话教练练习程序已启动！`);
+  console.log(`🚀 CoachLab 對話教練練習程序已啟動！`);
   console.log(`🌐 本地地址: http://localhost:${PORT}`);
-  console.log(`🤖 默认模型: ${getDefaultModel()}`);
-  console.log(`🔑 服务器端环境变量 API Key: ${process.env.GEMINI_API_KEY ? "已配置" : "未配置（可于网页界面填写）"}`);
+  console.log(`🤖 預設 Gemini 模型: ${getDefaultModel()}`);
+  console.log(`🟢 預設 DeepSeek 模型: ${DEFAULT_DEEPSEEK_MODEL}`);
+  console.log(`🔑 伺服器 Gemini Key: ${process.env.GEMINI_API_KEY ? "已配置" : "未配置"}`);
+  console.log(`🔑 伺服器 DeepSeek Key: ${process.env.DEEPSEEK_API_KEY ? "已配置" : "未配置"}`);
   console.log(`=================================================`);
 });

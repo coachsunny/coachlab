@@ -32,29 +32,34 @@ graph TD
     
     subgraph 本地 / Docker / VPS
         API Router -->|Express 服務器| Express[server.js :3000]
-        Express --> SDKLib[lib/gemini.js & lib/prompts.js]
+        Express --> SDKLib[lib/gemini.js & lib/deepseek.js]
         SDKLib --> GoogleGenAI[@google/genai 官方 SDK]
+        SDKLib --> DeepSeekAPI[DeepSeek 官方 REST API]
     end
 
     subgraph Cloudflare 邊緣環境
         API Router -->|Workers / Pages| Worker[worker.js]
         Worker --> Catchall[functions/api/[[catchall]].js]
         Catchall --> DirectREST[Google Gemini REST API v1beta]
+        Catchall --> DirectDeepSeek[DeepSeek REST API]
     end
 
-    GoogleGenAI --> GeminiCloud[Google Gemini 3.8 / 3.5 Flash]
-    DirectREST --> GeminiCloud
+    GoogleGenAI --> CloudLLMs[Google Gemini / DeepSeek 雙引擎]
+    DeepSeekAPI --> CloudLLMs
+    DirectREST --> CloudLLMs
+    DirectDeepSeek --> CloudLLMs
 ```
 
 ### 兩大運行模式：
 1. **本地 / 容器 / 傳統伺服器模式 (`server.js`)**：
    - 適合本機開發、測試或部署至 Docker、Zeabur、Render、AWS、自建 VPS。
-   - 使用 Express + `@google/genai` 官方 SDK。
-   - 支援讀取根目錄 `.env` 檔案中定義的 `GEMINI_API_KEY`、`PORT`、`GEMINI_MODEL`。
+   - 支援 **DeepSeek (REST)** 與 **Google Gemini (@google/genai SDK)** 雙模驅動。
+   - 支援讀取根目錄 `.env` 檔案中定義的 `DEEPSEEK_API_KEY`、`GEMINI_API_KEY`、`PORT`、`GEMINI_MODEL`。
 2. **Cloudflare Workers 邊緣模式 (`worker.js` + `functions/api/[[catchall]].js`)**：
    - 適合免維護無伺服器全球分發。
-   - 採用標準 REST API 呼叫，具備零冷啟動與高併發特性。
-   - 可在 Cloudflare Dashboard 或 `wrangler.toml` 配置環境變數與 Secret。
+   - 採用標準 REST API 呼叫，原生支援 **DeepSeek (`deepseek-chat`, `deepseek-reasoner`)** 與 **Google Gemini (`gemini-3.6-flash`, `gemini-3.8-flash`)**。
+   - 具備**雙引擎智慧故障自動備援**（當 DeepSeek 遇上高峰排隊或 Gemini 遇上區域網路波動時自動無縫換線）。
+   - 可在 Cloudflare Dashboard 或 `wrangler secret put DEEPSEEK_API_KEY` 配置加密密鑰。
 
 ---
 

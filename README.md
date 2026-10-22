@@ -1,6 +1,6 @@
 # 🎯 CoachLab - 沟通与教练对话模拟训练室
 
-> **自定义练习对象与情境，选用经典沟通教练模式（非暴力沟通、萨提亚冰山模型、GROW模型、ORID等），在安全无压力的环境中锻炼高情商对话力。练习后获得全方位深度复盘诊断报告与金句重构建议。背后调用 Google AI (Gemini 3.8 Flash) API。**
+> **自定义练习对象与情境，选用经典沟通教练模式（非暴力沟通、萨提亚冰山模型、GROW模型、ORID等），在安全无压力的环境中锻炼高情商对话力。练习后获得全方位深度复盘诊断报告与金句重构建议。原生支持 DeepSeek 与 Google Gemini 双大模型引擎。**
 
 ---
 
@@ -34,10 +34,11 @@
    - **🚀 刻意练习行动指引**：量身打造下一次练习的刻意练习步骤。
    - **📋 支持一键复制完整 Markdown 报告、打印/导出 PDF，并自动保存于历史记录**。
 
-5. **Google AI Gemini 官方 SDK 驱动**：
-   - 调用 Google 最新一代 **`gemini-3.8-flash`**（亦可自由切换模型）。
-   - 支持在网页界面直接填写 API Key（存储于浏览器 LocalStorage），亦支持在 `.env` 文件中预先配置。
-   - 内置一键 API 连接状态测试工具。
+5. **DeepSeek 与 Google Gemini 双引擎驱动**：
+   - **🟢 DeepSeek (深度求索)**：支持 `deepseek-chat` (DeepSeek-V3 高情商、接地气) 与 `deepseek-reasoner` (DeepSeek-R1 深度思考推理)。
+   - **🔵 Google Gemini**：支持 `gemini-3.6-flash` (官方稳定推荐)、`gemini-3.8-flash` 与 `gemini-3.5-flash-lite`。
+   - **智能前缀识别**：输入 `sk-...` 自动切换 DeepSeek，输入 `AIza...` / `AQ....` 自动切换 Gemini。
+   - **双模自动降级备援**：遭遇服务拥堵、429 或区域限制时，自动在 DeepSeek 与 Gemini 之间无缝切换。
 
 ---
 
@@ -97,15 +98,25 @@ npm start
 ## 🔑 配置 API Key 的方式
 
 ### 方式一：直接在网页界面配置（推荐学生使用）
-每个学生可在网页右上角点击「**⚙️ API 设置**」，填入自己的 Gemini API Key。各学生拥有独立速率额度，互不干扰。
+每个学生可在网页右上角点击「**⚙️ API 设置**」，填入自己的 **DeepSeek API Key** (`sk-...`) 或 **Google Gemini API Key** (`AIzaSy...` / `AQ....`)。系统会自动依据前缀切换引擎，各学生拥有独立速率额度，互不干扰。
 
-### 方式二：服务器环境变量配置（推荐老师/管理员统一配置）
-编辑根目录下的 `.env` 文件：
-```env
-GEMINI_API_KEY=AIzaSy...你的Key
-PORT=3000
-GEMINI_MODEL=gemini-3.8-flash
-```
+### 方式二：服务器环境变量 / Cloudflare Secrets 配置（推荐老师/管理员统一配置）
+- **本地运行**：编辑根目录下的 `.env` 文件：
+  ```env
+  # 支持配置 DeepSeek、Gemini 或两者皆配置自动备援
+  DEEPSEEK_API_KEY=sk-...你的DeepSeekKey
+  GEMINI_API_KEY=AIzaSy...你的GeminiKey
+  PORT=3000
+  GEMINI_MODEL=deepseek-chat
+  ```
+- **Cloudflare Workers 部署**：
+  ```bash
+  # 设置 DeepSeek 加密密钥
+  npx wrangler secret put DEEPSEEK_API_KEY
+
+  # 设置 Gemini 加密密钥
+  npx wrangler secret put GEMINI_API_KEY
+  ```
 启动后所有访问该网页的学生无需填写 Key，直接开箱即用。
 
 ---
@@ -114,22 +125,28 @@ GEMINI_MODEL=gemini-3.8-flash
 
 ```
 d:\Coach\
+├── COACHLAB_PROJECT_GUIDE.md  # 完整架构、理论模型与使用手册
+├── README.md                  # 简体中文说明与部署指南
 ├── package.json               # 项目配置与启动脚本
 ├── Dockerfile                 # Docker 容器化打包文件
 ├── docker-compose.yml         # Docker Compose 一键启动文件
 ├── .env                       # 本地环境变量配置
 ├── .env.example               # 环境变量范本
-├── server.js                  # Express 后端 API 服务
+├── server.js                  # Express 后端 API 服务 (支持 DeepSeek + Gemini)
+├── worker.js                  # Cloudflare Workers 入口点
+├── wrangler.toml              # Cloudflare Workers 部署配置
 ├── lib/
+│   ├── deepseek.js            # DeepSeek 官方 REST API 模块封装
 │   ├── gemini.js              # Google AI SDK 初始化与调用封装
 │   └── prompts.js             # 各理论提示词、角色演练与评估 Prompt
-├── public/
-│   ├── index.html             # 单页应用 UI 结构 (简体中文)
-│   ├── css/
-│   │   └── style.css          # 现代化专业教练风格样式
-│   └── js/
-│       ├── app.js             # 前端控制主逻辑与状态管理
-│       ├── frameworks.js      # 5 大沟通理论模型知识库
-│       └── presets.js         # 6 大职场/生活情境预设模板库
-└── README.md                  # 简体中文说明与部署指南
+├── functions/api/
+│   └── [[catchall]].js        # Cloudflare 边缘端无服务器 API 路由 (双引擎+自动降级备援)
+└── public/
+    ├── index.html             # 单页应用 UI 结构 (双引擎设置弹窗)
+    ├── css/
+    │   └── style.css          # 现代化专业教练风格样式
+    └── js/
+        ├── app.js             # 前端控制主逻辑与状态管理 (智能密钥前缀识别)
+        ├── frameworks.js      # 5 大沟通理论模型知识库
+        └── presets.js         # 6 大职场/生活情境预设模板库
 ```

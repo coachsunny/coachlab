@@ -1,5 +1,6 @@
 import { FRAMEWORKS_DATA } from "./frameworks.js";
 import { PRESETS } from "./presets.js";
+import { LangManager } from "./lang.js";
 
 // 全局状态
 const state = {
@@ -33,6 +34,8 @@ const elements = {
   navFrameworkBadge: document.getElementById("nav-framework-badge"),
   navFwIcon: document.getElementById("nav-fw-icon"),
   navFwName: document.getElementById("nav-fw-name"),
+  btnToggleLang: document.getElementById("btn-toggle-lang"),
+  langBtnText: document.getElementById("lang-btn-text"),
   btnSettings: document.getElementById("btn-settings"),
   btnHistory: document.getElementById("btn-history"),
   keyStatusDot: document.getElementById("key-status-dot"),
@@ -120,7 +123,21 @@ async function initApp() {
   renderPresetPills();
   bindEvents();
   updateKeyStatusUI();
+  initLanguageUI();
   await checkServerStatus();
+}
+
+/**
+ * 繁簡切換初始化 (OpenCC)
+ */
+function initLanguageUI() {
+  const currentLang = LangManager.getLang();
+  if (elements.langBtnText) {
+    elements.langBtnText.textContent = currentLang === "zh-TW" ? "簡體" : "繁體";
+  }
+  if (currentLang === "zh-TW") {
+    LangManager.translateDOM(document.body);
+  }
 }
 
 /**
@@ -551,6 +568,9 @@ function appendMessage({ role, content, innerThought }) {
   `;
 
   elements.chatMessages.appendChild(row);
+  if (LangManager.getLang() === "zh-TW") {
+    LangManager.translateDOM(row);
+  }
   scrollToBottom();
 }
 
@@ -616,12 +636,18 @@ async function handleGetHint() {
     if (!data.ok) throw new Error(data.error || "无法取得锦囊");
 
     elements.hintContent.innerHTML = formatMarkdownLike(data.hint);
+    if (LangManager.getLang() === "zh-TW") {
+      LangManager.translateDOM(elements.hintContent);
+    }
   } catch (err) {
     elements.hintContent.innerHTML = `
       <div class="test-result-box test-error">
         获取锦囊失败：${err.message}
       </div>
     `;
+    if (LangManager.getLang() === "zh-TW") {
+      LangManager.translateDOM(elements.hintContent);
+    }
   }
 }
 
@@ -784,6 +810,10 @@ function renderEvaluationReport(report) {
       <span>${escapeHtml(tip)}</span>
     </li>
   `).join("");
+
+  if (LangManager.getLang() === "zh-TW") {
+    LangManager.translateDOM(elements.viewReport);
+  }
 }
 
 // =================== 历史记录保存与浏览 ===================
@@ -842,6 +872,10 @@ function renderHistoryModal() {
       }
     });
   });
+
+  if (LangManager.getLang() === "zh-TW") {
+    LangManager.translateDOM(elements.historyList);
+  }
 }
 
 // =================== Markdown 报告生成与复制 ===================
@@ -931,6 +965,9 @@ function showSettingsModal() {
   updateServerKeyBannerUI();
   checkServerStatus(); // 异步刷新最新云端配置
   elements.modalSettings.classList.remove("hidden");
+  if (LangManager.getLang() === "zh-TW") {
+    LangManager.translateDOM(elements.modalSettings);
+  }
 }
 
 function showHintModal() {
@@ -953,9 +990,17 @@ function bindEvents() {
   // 导航
   elements.brandLogo.addEventListener("click", () => {
     if (state.activeView !== "setup") {
-      if (confirm("要返回首页设置吗？当前练习进度将会重置。")) {
+      if (confirm(LangManager.t("要返回首页设置吗？当前练习进度将会重置。"))) {
         switchView("setup");
       }
+    }
+  });
+
+  // 语言繁简即时切换 (OpenCC)
+  elements.btnToggleLang?.addEventListener("click", () => {
+    const newLang = LangManager.toggleLang();
+    if (elements.langBtnText) {
+      elements.langBtnText.textContent = newLang === "zh-TW" ? "簡體" : "繁體";
     }
   });
 

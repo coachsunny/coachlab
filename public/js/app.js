@@ -10,6 +10,7 @@ const state = {
   chatHistory: [],
   evaluationReport: null,
   isWaitingForAI: false,
+  studentName: localStorage.getItem("coachlab_user_name") || "學員教練",
   apiKey: localStorage.getItem("coachlab_api_key") || localStorage.getItem("gemini_api_key") || "",
   geminiModel: localStorage.getItem("coachlab_model") || localStorage.getItem("gemini_model") || "gemini-3.6-flash",
   hasServerKey: false,
@@ -41,6 +42,7 @@ const elements = {
   keyStatusDot: document.getElementById("key-status-dot"),
 
   // Setup view
+  studentCoachName: document.getElementById("student-coach-name"),
   frameworkGrid: document.getElementById("framework-selector-grid"),
   frameworkPreview: document.getElementById("active-framework-preview"),
   customFrameworkBox: document.getElementById("custom-framework-box"),
@@ -55,6 +57,7 @@ const elements = {
   btnStartPractice: document.getElementById("btn-start-practice"),
 
   // Practice view
+  btnDownloadChatLive: document.getElementById("btn-download-chat-live"),
   roomAvatar: document.getElementById("room-avatar"),
   roomTargetName: document.getElementById("room-target-name"),
   roomTargetRole: document.getElementById("room-target-role"),
@@ -87,6 +90,7 @@ const elements = {
   rptStageAnalysis: document.getElementById("rpt-stage-analysis"),
   rptKeyTakeaway: document.getElementById("rpt-key-takeaway"),
   rptPracticeTips: document.getElementById("rpt-practice-tips"),
+  btnDownloadReportMd: document.getElementById("btn-download-report-md"),
   btnCopyReport: document.getElementById("btn-copy-report"),
   btnPracticeAgain: document.getElementById("btn-practice-again"),
   btnNewPractice: document.getElementById("btn-new-practice"),
@@ -118,6 +122,14 @@ const elements = {
 
 // =================== 初始化函数 ===================
 async function initApp() {
+  if (elements.studentCoachName) {
+    elements.studentCoachName.value = state.studentName;
+    elements.studentCoachName.addEventListener("input", (e) => {
+      state.studentName = e.target.value.trim() || "學員教練";
+      localStorage.setItem("coachlab_user_name", state.studentName);
+    });
+  }
+
   renderFrameworkCards();
   selectFramework("nvc");
   renderPresetPills();
@@ -350,6 +362,10 @@ function applyPreset(preset) {
 
 // =================== 开始练习与初始化对话 ===================
 async function startPractice() {
+  const studentName = elements.studentCoachName?.value.trim() || state.studentName || "學員教練";
+  state.studentName = studentName;
+  localStorage.setItem("coachlab_user_name", studentName);
+
   const targetName = elements.targetName.value.trim() || "练习对象";
   const targetRole = elements.targetRole.value.trim() || "同事";
   const traits = elements.targetTraits.value.trim() || "一般性格";
@@ -375,6 +391,7 @@ async function startPractice() {
 
   // 封存对话设置
   state.targetConfig = {
+    studentName,
     targetName,
     targetRole,
     traits,
@@ -711,6 +728,8 @@ async function handleEndAndEvaluate() {
     renderEvaluationReport(data.report);
 
     saveToHistory(data.report);
+    // 自動同步歸檔至導師督導管理後台
+    syncPracticeLogToBackend(data.report, userTurns);
   } catch (err) {
     alert("评估失败：" + err.message);
     elements.rptSummary.textContent = "生成失败：" + err.message;
@@ -878,77 +897,215 @@ function renderHistoryModal() {
   }
 }
 
-// =================== Markdown 报告生成与复制 ===================
-function copyReportMarkdown() {
-  if (!state.evaluationReport) return;
+// =================== Markdown 报告生成、下載與雲端歸檔 ===================
+function generateReportMarkdown() {
+  if (!state.evaluationReport) return "";
   const r = state.evaluationReport;
   const fw = FRAMEWORKS_DATA[state.targetConfig?.frameworkId] || FRAMEWORKS_DATA.nvc;
   const turns = state.chatHistory.filter(m => m.role === "user").length;
+  const studentName = state.targetConfig?.studentName || state.studentName || "學員教練";
 
   const strengthsMd = (r.strengths || []).map((s, i) => `### ${i + 1}. ${s.title}
-> 💬 “${s.quote}”
-- **亮点解析**：${s.analysis}
+> 🌟 原始發言：「${s.quote}」
+- **亮點解析**：${s.analysis}
 `).join("\n");
 
   const growthMd = (r.growthAreas || []).map((g, i) => `### ${i + 1}. ${g.title}
-> 🔴 原始发言：“${g.quote}”
-- **盲点剖析**：${g.impact}
-- **✨ 示范金句**：“${g.betterAlternative}”
+> 🔴 原始發言：「${g.quote}」
+- **盲點剖析**：${g.impact}
+- **✨ 示範金句**：「${g.betterAlternative}」
 - **心法原理**：${g.rationale}
 `).join("\n");
 
   const tipsMd = (r.deliberatePracticeTips || []).map((tip, i) => `${i + 1}. ${tip}`).join("\n");
 
-  const md = `# 🎯 CoachLab 对话教练实战评估报告
+  let transcriptMd = "";
+  if (state.chatHistory && state.chatHistory.length > 0) {
+    let round = 1;
+    transcriptMd = state.chatHistory.map(m => {
+      if (m.role === "user") {
+        const out = `#### 🧑‍💼 第 ${round} 輪提問 · 教練【${studentName}】\n${m.content}\n`;
+        round++;
+        return out;
+      } else {
+        let out = `#### 👤 練習對象【${state.targetConfig?.targetName || "對象"}】\n${m.content}\n`;
+        if (m.innerThought) {
+          out += `> 💭 **對象潛意識心聲**：${m.innerThought}\n`;
+        }
+        return out;
+      }
+    }).join("\n");
+  }
 
-- **练习时间**：${new Date().toLocaleString("zh-CN")}
-- **沟通模型**：${fw.name} (${fw.subtitle})
-- **练习对象**：${state.targetConfig?.targetName}（${state.targetConfig?.targetRole}）
+  return `# 🎯 CoachLab 對話教練實戰復盤評估報告
+
+- **學員教練**：${studentName}
+- **練習時間**：${new Date().toLocaleString("zh-TW", { hour12: false })}
+- **溝通模型**：${fw.name} (${fw.subtitle || ""})
+- **練習對象**：${state.targetConfig?.targetName}（${state.targetConfig?.targetRole}）
 - **情境背景**：${state.targetConfig?.scenario}
-- **对话轮次**：${turns} 回合
-- **综合得分**：**${r.overallScore} / 100**（评级：${r.overallLevel}）
+- **對話輪次**：${turns} 回合
+- **綜合得分**：**${r.overallScore} / 100**（評級：${r.overallLevel}）
 
 ---
 
-## 📊 五大核心沟通维度
-- 理论架构掌握度：${r.dimensionScores?.frameworkProficiency || 0} / 100
-- 共情心与深度倾听：${r.dimensionScores?.empathyListening || 0} / 100
-- 有力提问与启发性：${r.dimensionScores?.powerfulQuestioning || 0} / 100
-- 心理安全感营造：${r.dimensionScores?.psychologicalSafety || 0} / 100
-- 推进与责任赋能：${r.dimensionScores?.forwardMomentum || 0} / 100
+## 📊 五大核心溝通維度
+- 理論架構掌握度：${r.dimensionScores?.frameworkProficiency || 0} / 100
+- 共情心與深度傾聽：${r.dimensionScores?.empathyListening || 0} / 100
+- 有力提問與啟發性：${r.dimensionScores?.powerfulQuestioning || 0} / 100
+- 心理安全感營造：${r.dimensionScores?.psychologicalSafety || 0} / 100
+- 推進與責任賦能：${r.dimensionScores?.forwardMomentum || 0} / 100
 
 ---
 
-## 📝 总体教练评述
+## 📝 總體教練評述
 ${r.summary}
 
 ---
 
-## 🌟 做得好的亮点 (Strengths)
+## 🌟 做得好的亮點 (Strengths)
 ${strengthsMd}
 
 ---
 
-## 💡 改善机会与示范金句 (Growth Opportunities)
+## 💡 改善機會與示範金句 (Growth Opportunities)
 ${growthMd}
 
 ---
 
-## 🔍 理论架构深入诊断
-- **层次深度分析**：${r.frameworkDeepDive?.stageAnalysis}
-- **核心心法提醒**：${r.frameworkDeepDive?.keyTakeaway}
+## 🔍 理論架構深入診斷
+- **層次深度分析**：${r.frameworkDeepDive?.stageAnalysis || ""}
+- **核心心法提醒**：${r.frameworkDeepDive?.keyTakeaway || ""}
 
 ---
 
-## 🚀 下一步刻意练习建议
+## 🚀 下一步刻意練習建議
 ${tipsMd}
+
+---
+
+## 📜 實況對話逐字稿附錄
+${transcriptMd || "（無對話記錄）"}
 `;
+}
+
+function copyReportMarkdown() {
+  const md = generateReportMarkdown();
+  if (!md) return;
 
   navigator.clipboard.writeText(md).then(() => {
-    alert("✅ 评估报告 Markdown 已成功复制到剪贴板！");
+    alert("✅ 評估報告 Markdown 已成功複製到剪貼板！");
   }).catch(() => {
-    prompt("请按 Ctrl+C 复制以下报告：", md);
+    prompt("請按 Ctrl+C 複製以下報告：", md);
   });
+}
+
+function downloadReportMarkdown() {
+  const md = generateReportMarkdown();
+  if (!md) {
+    alert("尚無評估報告可下載");
+    return;
+  }
+  const studentName = state.targetConfig?.studentName || state.studentName || "學員教練";
+  const targetName = state.targetConfig?.targetName || "對象";
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const filename = `CoachLab_復盤報告_${studentName}_${targetName}_${dateStr}.md`;
+
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadLiveChatTranscript() {
+  if (!state.chatHistory || state.chatHistory.length === 0) {
+    alert("目前尚無任何對話記錄！");
+    return;
+  }
+  const studentName = state.targetConfig?.studentName || state.studentName || "學員教練";
+  const targetName = state.targetConfig?.targetName || "對象";
+  const fw = FRAMEWORKS_DATA[state.targetConfig?.frameworkId] || FRAMEWORKS_DATA.nvc;
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const filename = `CoachLab_實戰對話文字稿_${studentName}_${targetName}_${dateStr}.md`;
+
+  let md = `# 🎯 CoachLab 實況對話文字稿\n\n`;
+  md += `- **教練學員**：${studentName}\n`;
+  md += `- **對象姓名**：${targetName}（${state.targetConfig?.targetRole || ""}）\n`;
+  md += `- **情境背景**：${state.targetConfig?.scenario || ""}\n`;
+  md += `- **溝通模式**：${fw.name}\n`;
+  md += `- **記錄時間**：${new Date().toLocaleString("zh-TW", { hour12: false })}\n\n`;
+  md += `---\n\n## 💬 對話逐次回放\n\n`;
+
+  let round = 1;
+  state.chatHistory.forEach(m => {
+    if (m.role === "user") {
+      md += `### 🧑‍💼 第 ${round} 輪提問 · 教練【${studentName}】\n${m.content}\n\n`;
+      round++;
+    } else {
+      md += `### 👤 練習對象【${targetName}】\n${m.content}\n\n`;
+      if (m.innerThought) {
+        md += `> 💭 **對象潛意識心聲**：${m.innerThought}\n\n`;
+      }
+    }
+  });
+
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function syncPracticeLogToBackend(report, userTurns) {
+  try {
+    const studentName = (state.targetConfig?.studentName || state.studentName || localStorage.getItem("coachlab_user_name") || "學員教練").trim();
+    const fw = FRAMEWORKS_DATA[state.targetConfig?.frameworkId] || FRAMEWORKS_DATA.nvc;
+
+    const payload = {
+      studentName,
+      frameworkId: state.targetConfig?.frameworkId || "nvc",
+      frameworkName: fw?.name || "教練模式",
+      targetName: state.targetConfig?.targetName || "練習對象",
+      targetRole: state.targetConfig?.targetRole || "",
+      scenario: state.targetConfig?.scenario || "",
+      difficulty: state.targetConfig?.difficulty || "realistic",
+      turns: userTurns || 1,
+      score: report.overallScore || 80,
+      level: report.overallLevel || "精準教練",
+      dimensionScores: report.dimensionScores || {},
+      summary: report.summary || "",
+      strengths: report.strengths || [],
+      growthAreas: report.growthAreas || [],
+      deliberatePracticeTips: report.deliberatePracticeTips || [],
+      frameworkDeepDive: report.frameworkDeepDive || null,
+      dialogueHistory: state.chatHistory.map(m => ({
+        role: m.role,
+        content: m.content,
+        innerThought: m.innerThought || ""
+      }))
+    };
+
+    const res = await fetch("/api/practice-logs/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.ok) {
+      console.log("實戰對話紀錄已成功同步至導師後台:", data.id);
+    }
+  } catch (err) {
+    console.warn("同步至導師後台失敗 (不影響本機練習):", err);
+  }
 }
 
 // =================== 弹窗交互控制 ===================
@@ -1105,6 +1262,8 @@ function bindEvents() {
     elements.frameworkCheatSheet.classList.toggle("hidden");
   });
 
+  elements.btnDownloadChatLive?.addEventListener("click", downloadLiveChatTranscript);
+
   elements.toggleInnerThoughts.addEventListener("change", (e) => {
     const show = e.target.checked;
     document.querySelectorAll(".inner-thought-pill").forEach(el => {
@@ -1113,6 +1272,7 @@ function bindEvents() {
   });
 
   // Report View
+  elements.btnDownloadReportMd?.addEventListener("click", downloadReportMarkdown);
   elements.btnCopyReport.addEventListener("click", copyReportMarkdown);
   elements.btnPracticeAgain.addEventListener("click", () => {
     if (state.targetConfig) {

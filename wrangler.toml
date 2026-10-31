@@ -12,3 +12,8 @@ directory = "./public"
 [placement]
 mode = "smart"
 
+[vars]
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "coachlab2026"
+
+

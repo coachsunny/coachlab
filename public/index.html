@@ -43,6 +43,9 @@
           <span class="icon">⚙️</span> <span class="nav-btn-text">API 设置</span>
           <span id="key-status-dot" class="status-dot dot-warn" title="未检测到 API Key"></span>
         </button>
+        <a href="/admin" id="btn-admin-link" class="nav-btn" title="進入導師督導管理後台" target="_blank" style="text-decoration: none; color: inherit;">
+          <span class="icon">🛡️</span> <span class="nav-btn-text">導師後台</span>
+        </a>
       </div>
     </header>
 
@@ -104,6 +107,14 @@
 
             <!-- 自定义对象表单 -->
             <div class="form-grid">
+              <div class="form-group full-width" style="background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 0.75rem 1rem;">
+                <label for="student-coach-name" style="font-weight: 700; color: #3730a3;">🧑‍💼 您的教練暱稱 / 學員代稱 <span class="req">*</span></label>
+                <div style="display: flex; gap: 0.5rem; margin-top: 0.35rem;">
+                  <input type="text" id="student-coach-name" placeholder="請輸入您的代稱（例：晴晴、Coach Alex）" value="學員教練" style="flex: 1;">
+                </div>
+                <p style="font-size: 0.78rem; color: #4338ca; margin-top: 0.25rem;">系統將自動以此代稱記錄您的練習歷程與對話實況，方便導師在後台督導與回顧。</p>
+              </div>
+
               <div class="form-group">
                 <label for="target-name">对象称呼 / 姓名 <span class="req">*</span></label>
                 <input type="text" id="target-name" placeholder="例如：小陈、小翔、张总监" value="小陈">
@@ -173,6 +184,9 @@
               <div class="turn-counter">
                 <span class="turn-label">对话轮次：</span><span id="turn-count" class="badge-count">0</span>
               </div>
+              <button id="btn-download-chat-live" class="btn btn-outline btn-sm" title="下載當前對話文字稿 (.md)">
+                📥 <span class="btn-text-full">下載對話文字稿</span><span class="btn-text-mobile">下載對話</span>
+              </button>
               <button id="btn-framework-guide-toggle" class="btn btn-outline btn-sm" title="查看此模式心法秘笈">
                 <span id="room-fw-icon">🕊️</span> <span class="btn-text-full">模式秘笈</span><span class="btn-text-mobile">秘笈</span>
               </button>
@@ -309,6 +323,9 @@
 
           <!-- 报告底部操作按钮 -->
           <div class="report-actions">
+            <button id="btn-download-report-md" class="btn btn-outline" title="下載包含完整逐字稿與 ICF 評估的 Markdown 報告">
+              📥 下載完整報告 (.md)
+            </button>
             <button id="btn-copy-report" class="btn btn-outline">
               📋 复制 Markdown 报告
             </button>

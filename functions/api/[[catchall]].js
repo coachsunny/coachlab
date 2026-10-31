@@ -409,6 +409,61 @@ async function executeAiTask({ config, systemInstruction, messages, temperature 
   }
 }
 
+// 學員實戰對話練習紀錄儲存庫 (記憶體備援，支援 Cloudflare KV 持久化)
+let memoryPracticeLogs = [];
+const adminSessions = new Map(); // token -> { username, createdAt, expiresAt }
+
+function getAdminCredentials(env) {
+  const username = (env && env.ADMIN_USERNAME) ? String(env.ADMIN_USERNAME).trim() : 'admin';
+  const password = (env && env.ADMIN_PASSWORD) ? String(env.ADMIN_PASSWORD).trim() : 'coachlab2026';
+  return { username, password };
+}
+
+function verifyAdminSession(request, env) {
+  const authHeader = request.headers.get('Authorization') || request.headers.get('x-admin-token') || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return null;
+
+  const session = adminSessions.get(token);
+  if (session && session.expiresAt > Date.now()) {
+    return session;
+  }
+
+  // 支援環境變數 ADMIN_SECRET 作為萬用管理金鑰
+  if (env && env.ADMIN_SECRET && token === String(env.ADMIN_SECRET).trim()) {
+    return { username: 'admin', token };
+  }
+
+  return null;
+}
+
+async function getStoredPracticeLogs(env) {
+  const kv = env && (env.COACHLAB_KV || env.COACHQUEST_KV);
+  if (kv) {
+    try {
+      const kvData = await kv.get('coachlab_practice_logs_all', { type: 'json' });
+      if (Array.isArray(kvData)) {
+        return kvData;
+      }
+    } catch (e) {
+      console.warn('KV 讀取 practice_logs 失敗，改用記憶體資料:', e);
+    }
+  }
+  return memoryPracticeLogs;
+}
+
+async function saveStoredPracticeLogs(env, logs) {
+  memoryPracticeLogs = logs;
+  const kv = env && (env.COACHLAB_KV || env.COACHQUEST_KV);
+  if (kv) {
+    try {
+      await kv.put('coachlab_practice_logs_all', JSON.stringify(logs));
+    } catch (e) {
+      console.warn('KV 儲存 practice_logs 失敗:', e);
+    }
+  }
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -451,22 +506,199 @@ export async function onRequest(context) {
     });
   }
 
-  // 下面都是 POST 接口
-  if (request.method !== "POST") {
-    return jsonResponse({ ok: false, error: "不支持的 HTTP 方法" }, 405);
+  // 安全解析 POST / PUT 請求的 Body
+  let body = {};
+  if (request.method === "POST" || request.method === "PUT") {
+    try {
+      body = await request.json();
+    } catch (e) {
+      body = {};
+    }
   }
 
-  let body = {};
-  try {
-    body = await request.json();
-  } catch (e) {
-    body = {};
+  // ==========================================
+  // 學員練習紀錄與導師管理後台 API
+  // ==========================================
+
+  // 1. POST /api/practice-logs/submit (學員實戰練習紀錄自動同步上傳)
+  if (pathname.endsWith("/practice-logs/submit") && request.method === "POST") {
+    try {
+      const clientIp = request.headers.get("cf-connecting-ip") || 
+                       request.headers.get("x-real-ip") || 
+                       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || 
+                       "雲端學員";
+      
+      const logEntry = {
+        id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+        submittedAt: new Date().toISOString(),
+        clientIp,
+        studentName: (body.studentName || "學員教練").trim(),
+        frameworkId: body.frameworkId || "nvc",
+        frameworkName: body.frameworkName || "",
+        targetName: body.targetName || "練習對象",
+        targetRole: body.targetRole || "",
+        scenario: body.scenario || "",
+        difficulty: body.difficulty || "realistic",
+        turns: Number(body.turns) || 1,
+        score: Number(body.score) || 80,
+        level: body.level || "精準教練",
+        dimensionScores: body.dimensionScores || {},
+        summary: body.summary || "",
+        strengths: Array.isArray(body.strengths) ? body.strengths : [],
+        growthAreas: Array.isArray(body.growthAreas) ? body.growthAreas : [],
+        deliberatePracticeTips: Array.isArray(body.deliberatePracticeTips) ? body.deliberatePracticeTips : [],
+        frameworkDeepDive: body.frameworkDeepDive || null,
+        dialogueHistory: Array.isArray(body.dialogueHistory) ? body.dialogueHistory : []
+      };
+
+      const logs = await getStoredPracticeLogs(env);
+      logs.unshift(logEntry);
+      if (logs.length > 500) logs.length = 500;
+      await saveStoredPracticeLogs(env, logs);
+
+      return jsonResponse({ ok: true, id: logEntry.id, message: "練習紀錄已成功歸檔至導師後台" });
+    } catch (err) {
+      return jsonResponse({ ok: false, error: err.message || "歸檔失敗" }, 500);
+    }
+  }
+
+  // 2. POST /api/admin/login (管理員登入)
+  if (pathname.endsWith("/admin/login") && request.method === "POST") {
+    const { username, password } = body;
+    const creds = getAdminCredentials(env);
+    if (username === creds.username && password === creds.password) {
+      const token = "clt_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10);
+      const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      adminSessions.set(token, { username, createdAt: Date.now(), expiresAt });
+      return jsonResponse({ ok: true, token, username });
+    }
+    return jsonResponse({ ok: false, error: "管理員帳號或密碼錯誤" }, 401);
+  }
+
+  // 3. GET /api/admin/verify (驗證管理員 Session)
+  if (pathname.endsWith("/admin/verify") && request.method === "GET") {
+    const session = verifyAdminSession(request, env);
+    if (!session) {
+      return jsonResponse({ ok: false, error: "未授權或登入已過期" }, 401);
+    }
+    return jsonResponse({ ok: true, username: session.username });
+  }
+
+  // 4. GET /api/admin/practice-logs (管理員調閱學員練習紀錄清單)
+  if (pathname.endsWith("/admin/practice-logs") && request.method === "GET") {
+    const session = verifyAdminSession(request, env);
+    if (!session) {
+      return jsonResponse({ ok: false, error: "未授權訪問管理端點" }, 401);
+    }
+
+    const logs = await getStoredPracticeLogs(env);
+    const search = (url.searchParams.get("search") || "").toLowerCase().trim();
+    const framework = (url.searchParams.get("framework") || "all").trim();
+    const level = (url.searchParams.get("level") || "all").trim();
+
+    let filtered = logs;
+    if (search) {
+      filtered = filtered.filter(l =>
+        (l.studentName && l.studentName.toLowerCase().includes(search)) ||
+        (l.targetName && l.targetName.toLowerCase().includes(search)) ||
+        (l.scenario && l.scenario.toLowerCase().includes(search)) ||
+        (l.summary && l.summary.toLowerCase().includes(search))
+      );
+    }
+    if (framework && framework !== "all") {
+      filtered = filtered.filter(l => l.frameworkId === framework);
+    }
+    if (level && level !== "all") {
+      filtered = filtered.filter(l => l.level === level);
+    }
+
+    const totalCount = logs.length;
+    const uniqueStudents = new Set(logs.map(l => l.studentName || "學員教練")).size;
+    const avgScore = totalCount > 0
+      ? Math.round(logs.reduce((sum, l) => sum + (l.score || 0), 0) / totalCount)
+      : 0;
+
+    const fwCounts = {};
+    logs.forEach(l => {
+      const fw = l.frameworkId || "nvc";
+      fwCounts[fw] = (fwCounts[fw] || 0) + 1;
+    });
+    let topFramework = "NVC";
+    let topCount = 0;
+    for (const [k, v] of Object.entries(fwCounts)) {
+      if (v > topCount) {
+        topCount = v;
+        topFramework = k.toUpperCase();
+      }
+    }
+
+    return jsonResponse({
+      ok: true,
+      stats: {
+        totalCount,
+        uniqueStudents,
+        avgScore,
+        topFramework
+      },
+      logs: filtered
+    });
+  }
+
+  // 5. GET /api/admin/practice-logs/detail (調閱單筆完整對話與逐字稿)
+  if (pathname.endsWith("/admin/practice-logs/detail") && request.method === "GET") {
+    const session = verifyAdminSession(request, env);
+    if (!session) {
+      return jsonResponse({ ok: false, error: "未授權訪問管理端點" }, 401);
+    }
+
+    const logId = url.searchParams.get("id");
+    const logs = await getStoredPracticeLogs(env);
+    const log = logs.find(l => l.id === logId);
+
+    if (!log) {
+      return jsonResponse({ ok: false, error: "找不到該筆學員練習紀錄" }, 404);
+    }
+
+    return jsonResponse({ ok: true, log });
+  }
+
+  // 6. POST /api/admin/practice-logs/delete (管理員刪除單筆紀錄)
+  if (pathname.endsWith("/admin/practice-logs/delete") && request.method === "POST") {
+    const session = verifyAdminSession(request, env);
+    if (!session) {
+      return jsonResponse({ ok: false, error: "未授權訪問管理端點" }, 401);
+    }
+
+    const logId = body.id;
+    let logs = await getStoredPracticeLogs(env);
+    logs = logs.filter(l => l.id !== logId);
+    await saveStoredPracticeLogs(env, logs);
+
+    return jsonResponse({ ok: true, message: "紀錄已成功刪除" });
+  }
+
+  // 7. POST /api/admin/practice-logs/clear (管理員清空所有紀錄)
+  if (pathname.endsWith("/admin/practice-logs/clear") && request.method === "POST") {
+    const session = verifyAdminSession(request, env);
+    if (!session) {
+      return jsonResponse({ ok: false, error: "未授權訪問管理端點" }, 401);
+    }
+
+    await saveStoredPracticeLogs(env, []);
+    return jsonResponse({ ok: true, message: "已清空所有練習紀錄" });
+  }
+
+  // ==========================================
+  // AI 互動端點 (POST)
+  // ==========================================
+  if (request.method !== "POST") {
+    return jsonResponse({ ok: false, error: "不支持的 HTTP 方法" }, 405);
   }
 
   const config = resolveApiConfig(body, env);
   const baseUrl = getBaseUrl(env);
 
-  // 2. POST /api/test-key
+  // 8. POST /api/test-key
   if (pathname.endsWith("/test-key")) {
     try {
       const isClientKey = config.isClientKey;

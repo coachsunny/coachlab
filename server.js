@@ -31,6 +31,41 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// /admin 捷徑導向後台頁面
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+app.get("/admin/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+
+// 學員實戰練習紀錄與導師管理後台（本地記憶體儲存）
+let memoryPracticeLogs = [];
+const adminSessions = new Map();
+
+function getAdminCredentials() {
+  const username = (process.env.ADMIN_USERNAME || "admin").trim();
+  const password = (process.env.ADMIN_PASSWORD || "coachlab2026").trim();
+  return { username, password };
+}
+
+function verifyAdminSession(req) {
+  const authHeader = req.headers["authorization"] || req.headers["x-admin-token"] || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) return null;
+
+  const session = adminSessions.get(token);
+  if (session && session.expiresAt > Date.now()) {
+    return session;
+  }
+
+  if (process.env.ADMIN_SECRET && token === process.env.ADMIN_SECRET.trim()) {
+    return { username: "admin", token };
+  }
+
+  return null;
+}
+
 function getKeyPreview(key) {
   if (!key || key.length < 8) return "";
   return key.slice(0, 6) + "..." + key.slice(-4);
@@ -246,6 +281,168 @@ app.post("/api/evaluate", async (req, res) => {
       error: error.message || "生成評估報告失敗"
     });
   }
+});
+
+// ==========================================
+// 學員練習紀錄與導師管理後台 API
+// ==========================================
+
+// 1. POST /api/practice-logs/submit
+app.post("/api/practice-logs/submit", (req, res) => {
+  try {
+    const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "本地學員";
+    const body = req.body || {};
+
+    const logEntry = {
+      id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
+      submittedAt: new Date().toISOString(),
+      clientIp,
+      studentName: (body.studentName || "學員教練").trim(),
+      frameworkId: body.frameworkId || "nvc",
+      frameworkName: body.frameworkName || "",
+      targetName: body.targetName || "練習對象",
+      targetRole: body.targetRole || "",
+      scenario: body.scenario || "",
+      difficulty: body.difficulty || "realistic",
+      turns: Number(body.turns) || 1,
+      score: Number(body.score) || 80,
+      level: body.level || "精準教練",
+      dimensionScores: body.dimensionScores || {},
+      summary: body.summary || "",
+      strengths: Array.isArray(body.strengths) ? body.strengths : [],
+      growthAreas: Array.isArray(body.growthAreas) ? body.growthAreas : [],
+      deliberatePracticeTips: Array.isArray(body.deliberatePracticeTips) ? body.deliberatePracticeTips : [],
+      frameworkDeepDive: body.frameworkDeepDive || null,
+      dialogueHistory: Array.isArray(body.dialogueHistory) ? body.dialogueHistory : []
+    };
+
+    memoryPracticeLogs.unshift(logEntry);
+    if (memoryPracticeLogs.length > 500) memoryPracticeLogs.length = 500;
+
+    res.json({ ok: true, id: logEntry.id, message: "練習紀錄已成功歸檔至導師後台" });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message || "歸檔失敗" });
+  }
+});
+
+// 2. POST /api/admin/login
+app.post("/api/admin/login", (req, res) => {
+  const { username, password } = req.body || {};
+  const creds = getAdminCredentials();
+  if (username === creds.username && password === creds.password) {
+    const token = "clt_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10);
+    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    adminSessions.set(token, { username, createdAt: Date.now(), expiresAt });
+    return res.json({ ok: true, token, username });
+  }
+  return res.status(401).json({ ok: false, error: "管理員帳號或密碼錯誤" });
+});
+
+// 3. GET /api/admin/verify
+app.get("/api/admin/verify", (req, res) => {
+  const session = verifyAdminSession(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, error: "未授權或登入已過期" });
+  }
+  res.json({ ok: true, username: session.username });
+});
+
+// 4. GET /api/admin/practice-logs
+app.get("/api/admin/practice-logs", (req, res) => {
+  const session = verifyAdminSession(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, error: "未授權訪問管理端點" });
+  }
+
+  const search = (req.query.search || "").toLowerCase().trim();
+  const framework = (req.query.framework || "all").trim();
+  const level = (req.query.level || "all").trim();
+
+  let filtered = memoryPracticeLogs;
+  if (search) {
+    filtered = filtered.filter(l =>
+      (l.studentName && l.studentName.toLowerCase().includes(search)) ||
+      (l.targetName && l.targetName.toLowerCase().includes(search)) ||
+      (l.scenario && l.scenario.toLowerCase().includes(search)) ||
+      (l.summary && l.summary.toLowerCase().includes(search))
+    );
+  }
+  if (framework && framework !== "all") {
+    filtered = filtered.filter(l => l.frameworkId === framework);
+  }
+  if (level && level !== "all") {
+    filtered = filtered.filter(l => l.level === level);
+  }
+
+  const totalCount = memoryPracticeLogs.length;
+  const uniqueStudents = new Set(memoryPracticeLogs.map(l => l.studentName || "學員教練")).size;
+  const avgScore = totalCount > 0
+    ? Math.round(memoryPracticeLogs.reduce((sum, l) => sum + (l.score || 0), 0) / totalCount)
+    : 0;
+
+  const fwCounts = {};
+  memoryPracticeLogs.forEach(l => {
+    const fw = l.frameworkId || "nvc";
+    fwCounts[fw] = (fwCounts[fw] || 0) + 1;
+  });
+  let topFramework = "NVC";
+  let topCount = 0;
+  for (const [k, v] of Object.entries(fwCounts)) {
+    if (v > topCount) {
+      topCount = v;
+      topFramework = k.toUpperCase();
+    }
+  }
+
+  res.json({
+    ok: true,
+    stats: {
+      totalCount,
+      uniqueStudents,
+      avgScore,
+      topFramework
+    },
+    logs: filtered
+  });
+});
+
+// 5. GET /api/admin/practice-logs/detail
+app.get("/api/admin/practice-logs/detail", (req, res) => {
+  const session = verifyAdminSession(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, error: "未授權訪問管理端點" });
+  }
+
+  const logId = req.query.id;
+  const log = memoryPracticeLogs.find(l => l.id === logId);
+  if (!log) {
+    return res.status(404).json({ ok: false, error: "找不到該筆學員練習紀錄" });
+  }
+
+  res.json({ ok: true, log });
+});
+
+// 6. POST /api/admin/practice-logs/delete
+app.post("/api/admin/practice-logs/delete", (req, res) => {
+  const session = verifyAdminSession(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, error: "未授權訪問管理端點" });
+  }
+
+  const logId = req.body?.id;
+  memoryPracticeLogs = memoryPracticeLogs.filter(l => l.id !== logId);
+  res.json({ ok: true, message: "紀錄已成功刪除" });
+});
+
+// 7. POST /api/admin/practice-logs/clear
+app.post("/api/admin/practice-logs/clear", (req, res) => {
+  const session = verifyAdminSession(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, error: "未授權訪問管理端點" });
+  }
+
+  memoryPracticeLogs = [];
+  res.json({ ok: true, message: "已清空所有練習紀錄" });
 });
 
 // 啟動伺服器

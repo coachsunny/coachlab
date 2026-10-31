@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoachLab 導師督導管理看板 · 全體學員對話實錄中心</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎯</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <script src="/js/opencc-bundle.js"></script>
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --primary-hover: #4338ca;
+      --primary-light: #e0e7ff;
+      --secondary: #6366f1;
+      --success: #10b981;
+      --success-light: #d1fae5;
+      --warning: #f59e0b;
+      --warning-light: #fef3c7;
+      --danger: #ef4444;
+      --danger-light: #fee2e2;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --radius: 12px;
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Plus Jakarta Sans", "Noto Sans TC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 頂部導覽列 */
+    .admin-nav {
+      background: #ffffff;
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-weight: 800;
+      font-size: 1.15rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .brand-icon {
+      font-size: 1.4rem;
+    }
+    .brand-badge {
+      background: var(--primary-light);
+      color: var(--primary);
+      padding: 0.15rem 0.55rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+    }
+
+    /* 按鈕樣式 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.45rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+      text-decoration: none;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-outline { background: #fff; border-color: var(--border); color: var(--text); }
+    .btn-outline:hover { background: #f1f5f9; border-color: #cbd5e1; }
+    .btn-danger { background: #fff; border-color: var(--danger-light); color: var(--danger); }
+    .btn-danger:hover { background: var(--danger-light); }
+    .btn-sm { padding: 0.3rem 0.65rem; font-size: 0.8rem; }
+
+    /* 主要容器 */
+    .container {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1.5rem;
+      width: 100%;
+      flex: 1;
+    }
+
+    /* 登入視窗 */
+    .login-wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 70vh;
+    }
+    .login-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 2.25rem;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .login-icon { font-size: 3rem; margin-bottom: 0.5rem; }
+    .login-title { font-size: 1.35rem; font-weight: 800; margin-bottom: 0.35rem; color: #0f172a; }
+    .login-sub { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem; }
+    .form-group { text-align: left; margin-bottom: 1rem; }
+    .form-group label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.35rem; }
+    .form-control {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      transition: border-color 0.2s;
+    }
+    .form-control:focus { outline: none; border-color: var(--primary); }
+    .login-error {
+      color: var(--danger);
+      background: var(--danger-light);
+      padding: 0.55rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+
+    /* 數據統計儀表板 (KPI Stats) */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.15rem 1.35rem;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+      background: var(--bg);
+    }
+    .stat-val { font-size: 1.6rem; font-weight: 800; color: var(--text); line-height: 1.2; }
+    .stat-lbl { font-size: 0.82rem; color: var(--text-muted); font-weight: 600; }
+
+    /* 控制與篩選列 */
+    .toolbar-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+      box-shadow: var(--shadow);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+    }
+
+    /* 列表表格 */
+    .table-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .table-responsive {
+      width: 100%;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.9rem;
+    }
+    th {
+      background: #f8fafc;
+      color: var(--text-muted);
+      font-weight: 700;
+      font-size: 0.8rem;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    td {
+      padding: 0.95rem 1rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fbfcfe; }
+
+    .student-cell {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+    .student-avatar {
+      font-size: 1.3rem;
+      background: #f1f5f9;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .student-name { font-weight: 700; color: #0f172a; }
+    .student-ip { font-size: 0.75rem; color: var(--text-muted); }
+
+    .fw-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      background: #eef2ff;
+      color: #4338ca;
+      border: 1px solid #c7d2fe;
+      white-space: nowrap;
+    }
+
+    .score-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+      font-weight: 800;
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+    .badge-master { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .badge-proficient { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .badge-developing { background: #fefce8; color: #a16207; border: 1px solid #fef08a; }
+    .badge-novice { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+    .summary-preview {
+      max-width: 280px;
+      font-size: 0.82rem;
+      color: #475569;
+      background: #f8fafc;
+      padding: 0.35rem 0.65rem;
+      border-left: 3px solid var(--primary);
+      border-radius: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .action-cell {
+      display: flex;
+      gap: 0.45rem;
+      white-space: nowrap;
+    }
+
+    /* 彈窗樣式 */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(15, 23, 42, 0.65);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 1rem;
+    }
+    .modal-dialog {
+      background: #fff;
+      border-radius: var(--radius);
+      width: 100%;
+      max-width: 900px;
+      max-height: 92vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+    }
+    .modal-header {
+      padding: 1.15rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-body {
+      padding: 1.5rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .modal-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #f8fafc;
+      border-bottom-left-radius: var(--radius);
+      border-bottom-right-radius: var(--radius);
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    /* 對話逐字稿 */
+    .transcript-box {
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      margin-top: 0.75rem;
+    }
+    .chat-bubble-turn {
+      padding: 0.85rem 1.15rem;
+      border-radius: 10px;
+      font-size: 0.92rem;
+      line-height: 1.55;
+    }
+    .turn-user {
+      background: #f0fdf4;
+      border-left: 4px solid #10b981;
+    }
+    .turn-target {
+      background: #f8fafc;
+      border-left: 4px solid #6366f1;
+    }
+    .turn-role {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+    .turn-thought {
+      font-size: 0.82rem;
+      color: #b45309;
+      background: #fef3c7;
+      padding: 0.35rem 0.65rem;
+      border-radius: 6px;
+      margin-top: 0.45rem;
+      display: inline-block;
+      line-height: 1.4;
+    }
+
+    /* 維度分數網格 */
+    .dim-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .dim-badge {
+      background: #f1f5f9;
+      padding: 0.5rem 0.65rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    /* 亮點與金句卡片 */
+    .highlight-card {
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      padding: 0.85rem 1rem;
+      margin-bottom: 0.75rem;
+    }
+    .highlight-card.strength {
+      border-left: 4px solid #10b981;
+    }
+    .highlight-card.growth {
+      border-left: 4px solid #f59e0b;
+    }
+    .quote-box {
+      background: #ffffff;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.88rem;
+      color: #334155;
+      font-style: italic;
+      margin: 0.35rem 0;
+      border: 1px dashed var(--border);
+    }
+
+    .hidden { display: none !important; }
+    .empty-state {
+      padding: 3.5rem 1.5rem;
+      text-align: center;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 頂部導覽列 -->
+  <header class="admin-nav">
+    <a href="#" class="brand">
+      <span class="brand-icon">🎯</span>
+      <span>CoachLab</span>
+      <span class="brand-badge">導師督導管理看板</span>
+    </a>
+    <div class="nav-actions">
+      <button class="btn btn-outline btn-sm" id="btnToggleLang" title="切換繁簡體 (OpenCC)">
+        <span>🌐</span> <span id="langBtnText">簡體</span>
+      </button>
+      <a href="/" class="btn btn-outline btn-sm">
+        <span>💬</span> <span>返回對話模擬室</span>
+      </a>
+      <div id="authNavControls" class="hidden" style="display: inline-flex; gap: 0.5rem;">
+        <button id="btnExportAllJson" class="btn btn-outline btn-sm" title="匯出全部紀錄 JSON 檔">
+          📦 匯出全部 (.json)
+        </button>
+        <button id="btnRefreshList" class="btn btn-outline btn-sm">
+          🔄 重新整理
+        </button>
+        <button id="btnLogout" class="btn btn-danger btn-sm">
+          🚪 登出
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 區塊 1: 登入視窗 -->
+  <main class="container" id="loginSection">
+    <div class="login-wrapper">
+      <div class="login-card">
+        <div class="login-icon">🔐</div>
+        <h2 class="login-title">導師督導身分驗證</h2>
+        <p class="login-sub">請輸入管理員帳號與密碼以調閱全體學員對話實錄與診斷報告</p>
+        
+        <div id="loginErrorMsg" class="login-error"></div>
+
+        <form id="formAdminLogin" onsubmit="return false;">
+          <div class="form-group">
+            <label for="inputAdminUser">管理員帳號</label>
+            <input type="text" id="inputAdminUser" class="form-control" placeholder="預設：admin" required autofocus>
+          </div>
+          <div class="form-group">
+            <label for="inputAdminPass">管理員密碼</label>
+            <input type="password" id="inputAdminPass" class="form-control" placeholder="預設：coachlab2026" required>
+          </div>
+          <button type="submit" id="btnSubmitLogin" class="btn btn-primary" style="width: 100%; padding: 0.75rem; font-size: 1rem; margin-top: 0.5rem;">
+            🚀 登入督導看板
+          </button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <!-- 區塊 2: 管理看板主介面 -->
+  <main class="container hidden" id="dashboardSection">
+    
+    <!-- 數據概覽 -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #e0e7ff; color: #4f46e5;">📝</div>
+        <div>
+          <div class="stat-val" id="statTotalCount">0</div>
+          <div class="stat-lbl">累計實戰演練場次</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #d1fae5; color: #059669;">👥</div>
+        <div>
+          <div class="stat-val" id="statUniqueStudents">0</div>
+          <div class="stat-lbl">演練學員人數 (去重)</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #fef3c7; color: #d97706;">💯</div>
+        <div>
+          <div class="stat-val" id="statAvgScore">0分</div>
+          <div class="stat-lbl">全體學員平均評分</div>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: #fae8ff; color: #a21caf;">🕊️</div>
+        <div>
+          <div class="stat-val" id="statTopFramework" style="font-size: 1.25rem;">NVC</div>
+          <div class="stat-lbl">最熱門演練模型</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 篩選工具列 -->
+    <div class="toolbar-card">
+      <div class="filter-group">
+        <input type="text" id="filterSearch" class="form-control" placeholder="🔍 搜尋學員姓名 / 對象 / 情境 / 金句..." style="width: 280px; font-size: 0.85rem;">
+        
+        <select id="filterFramework" class="form-control" style="width: 190px; font-size: 0.85rem;">
+          <option value="all">全部理論模型</option>
+          <option value="nvc">🕊️ 非暴力溝通 (NVC)</option>
+          <option value="satir_iceberg">🏔️ 薩提爾冰山模型</option>
+          <option value="grow">🌱 GROW 教練模型</option>
+          <option value="orid">🧭 ORID 焦點討論法</option>
+          <option value="sfbc">✨ 焦點解決教練 (SFBC)</option>
+          <option value="custom">⚙️ 自定義溝通模式</option>
+        </select>
+
+        <select id="filterLevel" class="form-control" style="width: 160px; font-size: 0.85rem;">
+          <option value="all">全部評級等級</option>
+          <option value="精熟大師">🏆 精熟大師 (≥90)</option>
+          <option value="優秀教練">🌟 優秀教練 (80-89)</option>
+          <option value="具備雛形">🌱 具備雛形 (70-79)</option>
+          <option value="起步探索">🔍 起步探索 (&lt;70)</option>
+        </select>
+      </div>
+
+      <div>
+        <button id="btnClearAllLogs" class="btn btn-danger btn-sm" title="危險：清空伺服器所有紀錄">
+          🗑️ 清空所有紀錄
+        </button>
+      </div>
+    </div>
+
+    <!-- 學員紀錄列表 -->
+    <div class="table-card">
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>學員身分</th>
+              <th>理論模型</th>
+              <th>練習對象與情境</th>
+              <th>評分與評級</th>
+              <th>互動輪次</th>
+              <th>診斷摘要</th>
+              <th>演練時間</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody">
+            <!-- 動態渲染學員紀錄列 -->
+          </tbody>
+        </table>
+      </div>
+      <div id="logsEmptyState" class="empty-state hidden">
+        <div style="font-size: 3rem; margin-bottom: 0.5rem;">📭</div>
+        <div style="font-weight: 700; font-size: 1.1rem; color: #334155;">目前尚無學員練習紀錄</div>
+        <div style="font-size: 0.88rem; margin-top: 0.25rem;">學員在手機或電腦完成任何對話演練並產出復盤後，對話文字稿與報告將即時自動留存於此！</div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 彈窗: 檢閱學員完整對話逐字稿與 ICF 深度分析 -->
+  <div class="modal-overlay hidden" id="modalLogDetail">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="modalLogTitle">📜 學員實戰對話實錄與督導復盤</h3>
+        <button class="btn btn-outline btn-sm" id="btnCloseDetailModal" style="border: none; font-size: 1.25rem;">&times;</button>
+      </div>
+      <div class="modal-body" id="modalLogContent">
+        <!-- 動態渲染詳細內容 -->
+      </div>
+      <div class="modal-footer">
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <button class="btn btn-primary btn-sm" id="btnDownloadDetailMd">
+            📥 下載 Markdown 報告與逐字稿 (.md)
+          </button>
+          <button class="btn btn-outline btn-sm" id="btnCopyDetailText">
+            📋 複製逐字稿全文
+          </button>
+        </div>
+        <button class="btn btn-outline btn-sm" id="btnCloseDetailModalBottom">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/admin.js" type="module"></script>
+</body>
+</html>

@@ -450,6 +450,32 @@
       </div>
     </div>
 
+    <!-- ================= 弹窗: 初次进入设定代称 (Onboarding Nickname Modal) ================= -->
+    <div id="modal-onboarding" class="modal-overlay hidden">
+      <div class="modal-dialog" style="max-width: 440px; text-align: center;">
+        <div class="modal-header" style="justify-content: center; position: relative;">
+          <h3 style="font-size: 1.2rem; font-weight: 800; color: #1e1b4b;">🎯 歡迎來到 CoachLab！</h3>
+          <button class="modal-close" id="btn-close-onboarding" style="position: absolute; right: 1rem;">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 1.25rem 1rem;">
+          <div style="font-size: 2.8rem; margin-bottom: 0.5rem;">🧑‍💼</div>
+          <h4 style="font-size: 1.05rem; font-weight: 700; color: #0f172a; margin-bottom: 0.35rem;">請為自己設定一個教練代稱 / 暱稱</h4>
+          <p style="font-size: 0.85rem; color: #64748b; line-height: 1.5; margin-bottom: 1.25rem;">
+            在接下來的擬真情境對話中，AI 對象與導師督導將以此代稱與您互動，並永久記錄您的練習歷程與成就。
+          </p>
+          <div style="text-align: left; margin-bottom: 0.75rem;">
+            <label for="input-onboarding-name" style="font-size: 0.82rem; font-weight: 700; color: #3730a3; display: block; margin-bottom: 0.25rem;">您的暱稱 / 代稱：</label>
+            <input type="text" id="input-onboarding-name" placeholder="例如：晴晴、Coach Alex、小明" style="width: 100%; padding: 0.65rem 0.85rem; border: 1.5px solid #6366f1; border-radius: 8px; font-size: 0.95rem; font-weight: 600; outline: none; box-sizing: border-box;">
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content: center;">
+          <button id="btn-save-onboarding" class="btn btn-primary btn-large" style="width: 100%;">
+            ✨ 確認代稱並開始練習
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- 载入模块 JS (带版本号防手机端缓存) -->

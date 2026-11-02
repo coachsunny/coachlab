@@ -30,6 +30,8 @@ const elements = {
   btnLogout: document.getElementById('btnLogout'),
   btnRefreshList: document.getElementById('btnRefreshList'),
   btnExportAllJson: document.getElementById('btnExportAllJson'),
+  btnImportSave: document.getElementById('btnImportSave'),
+  fileImportSave: document.getElementById('fileImportSave'),
   btnClearAllLogs: document.getElementById('btnClearAllLogs'),
   btnToggleLang: document.getElementById('btnToggleLang'),
   langBtnText: document.getElementById('langBtnText'),
@@ -92,6 +94,8 @@ function bindEvents() {
   // 列表控制
   elements.btnRefreshList?.addEventListener('click', () => loadPracticeLogs());
   elements.btnExportAllJson?.addEventListener('click', handleExportAllJson);
+  elements.btnImportSave?.addEventListener('click', () => elements.fileImportSave?.click());
+  elements.fileImportSave?.addEventListener('change', handleFileImport);
   elements.btnClearAllLogs?.addEventListener('click', handleClearAllLogs);
 
   // 篩選與搜尋
@@ -263,12 +267,20 @@ function renderLogsTable(logs) {
     const tr = document.createElement('tr');
     const dateStr = new Date(log.submittedAt || log.date).toLocaleString('zh-TW', { hour12: false });
     
-    // 評級徽章
+    // 評級徽章 (支援進行中實況標記)
+    const isLive = log.status === "進行中 (未完成評估)" || (!log.score && log.score !== 0 && !log.overallScore);
     let badgeClass = 'badge-developing';
-    if (log.score >= 90) badgeClass = 'badge-master';
-    else if (log.score >= 80) badgeClass = 'badge-proficient';
-    else if (log.score >= 70) badgeClass = 'badge-developing';
-    else badgeClass = 'badge-novice';
+    let badgeText = `${escapeHtml(log.level || '評估完成')} · ${log.score || 80}分`;
+
+    if (isLive) {
+      badgeClass = 'badge-novice';
+      badgeText = `⏳ 演練進行中 · ${log.turns || 1} 輪`;
+    } else {
+      if (log.score >= 90) badgeClass = 'badge-master';
+      else if (log.score >= 80) badgeClass = 'badge-proficient';
+      else if (log.score >= 70) badgeClass = 'badge-developing';
+      else badgeClass = 'badge-novice';
+    }
 
     const fwMeta = FRAMEWORK_META[log.frameworkId] || { name: log.frameworkName || '理論模式', icon: '🕊️' };
     const summaryText = log.summary || (log.strengths?.[0]?.analysis) || '（暫無診斷摘要）';
@@ -297,7 +309,7 @@ function renderLogsTable(logs) {
       </td>
       <td>
         <span class="score-badge ${badgeClass}">
-          ${escapeHtml(log.level || '評估完成')} · ${log.score || 80}分
+          ${badgeText}
         </span>
       </td>
       <td>
@@ -696,6 +708,42 @@ function downloadLogMarkdown(log) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// 匯入學員本機存檔 JSON 檔案
+async function handleFileImport(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const token = localStorage.getItem(ADMIN_TOKEN_KEY);
+  if (!token) return;
+
+  const reader = new FileReader();
+  reader.onload = async (event) => {
+    try {
+      const parsed = JSON.parse(event.target.result);
+      const res = await fetch('/api/admin/import-save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ data: parsed })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        alert(LangManager.t(data.message || '匯入成功！'));
+        await loadPracticeLogs();
+      } else {
+        alert(LangManager.t('匯入失敗：' + (data.error || '檔案格式不符')));
+      }
+    } catch (err) {
+      alert(LangManager.t('讀取 JSON 檔案失敗，請確認檔案有效性'));
+    } finally {
+      e.target.value = '';
+    }
+  };
+  reader.readAsText(file);
 }
 
 // 複製逐字稿純文字

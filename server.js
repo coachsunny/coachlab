@@ -287,36 +287,45 @@ app.post("/api/evaluate", async (req, res) => {
 // 學員練習紀錄與導師管理後台 API
 // ==========================================
 
-// 1. POST /api/practice-logs/submit
+// 1. POST /api/practice-logs/submit (學員練習紀錄同步與中途即時快照)
 app.post("/api/practice-logs/submit", (req, res) => {
   try {
     const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "本地學員";
     const body = req.body || {};
+    const payload = (body && typeof body.log === "object" && body.log !== null) ? body.log : body;
+    const logId = payload.id || ("log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7));
+    const status = payload.status || (payload.score ? "已完成評估" : "進行中 (未完成評估)");
 
     const logEntry = {
-      id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-      submittedAt: new Date().toISOString(),
+      id: logId,
+      submittedAt: payload.submittedAt || new Date().toISOString(),
       clientIp,
-      studentName: (body.studentName || "學員教練").trim(),
-      frameworkId: body.frameworkId || "nvc",
-      frameworkName: body.frameworkName || "",
-      targetName: body.targetName || "練習對象",
-      targetRole: body.targetRole || "",
-      scenario: body.scenario || "",
-      difficulty: body.difficulty || "realistic",
-      turns: Number(body.turns) || 1,
-      score: Number(body.score) || 80,
-      level: body.level || "精準教練",
-      dimensionScores: body.dimensionScores || {},
-      summary: body.summary || "",
-      strengths: Array.isArray(body.strengths) ? body.strengths : [],
-      growthAreas: Array.isArray(body.growthAreas) ? body.growthAreas : [],
-      deliberatePracticeTips: Array.isArray(body.deliberatePracticeTips) ? body.deliberatePracticeTips : [],
-      frameworkDeepDive: body.frameworkDeepDive || null,
-      dialogueHistory: Array.isArray(body.dialogueHistory) ? body.dialogueHistory : []
+      studentName: (payload.studentName || payload.studentNickname || "學員教練").trim(),
+      frameworkId: payload.frameworkId || "nvc",
+      frameworkName: payload.frameworkName || "",
+      targetName: payload.targetName || "練習對象",
+      targetRole: payload.targetRole || "",
+      scenario: payload.scenario || "",
+      difficulty: payload.difficulty || "realistic",
+      turns: Number(payload.turns) || 1,
+      score: Number(payload.score) || 0,
+      level: payload.level || (status === "已完成評估" ? "精準教練" : "演練進行中"),
+      status,
+      dimensionScores: payload.dimensionScores || {},
+      summary: payload.summary || (status === "進行中 (未完成評估)" ? `學員正進行第 ${payload.turns || 1} 輪對話演練中...` : ""),
+      strengths: Array.isArray(payload.strengths) ? payload.strengths : [],
+      growthAreas: Array.isArray(payload.growthAreas) ? payload.growthAreas : [],
+      deliberatePracticeTips: Array.isArray(payload.deliberatePracticeTips) ? payload.deliberatePracticeTips : [],
+      frameworkDeepDive: payload.frameworkDeepDive || null,
+      dialogueHistory: Array.isArray(payload.dialogueHistory) ? payload.dialogueHistory : []
     };
 
-    memoryPracticeLogs.unshift(logEntry);
+    const existingIdx = memoryPracticeLogs.findIndex(l => l.id === logId);
+    if (existingIdx >= 0) {
+      memoryPracticeLogs[existingIdx] = logEntry;
+    } else {
+      memoryPracticeLogs.unshift(logEntry);
+    }
     if (memoryPracticeLogs.length > 500) memoryPracticeLogs.length = 500;
 
     res.json({ ok: true, id: logEntry.id, message: "練習紀錄已成功歸檔至導師後台" });
@@ -443,6 +452,61 @@ app.post("/api/admin/practice-logs/clear", (req, res) => {
 
   memoryPracticeLogs = [];
   res.json({ ok: true, message: "已清空所有練習紀錄" });
+});
+
+// 8. POST /api/admin/import-save (導師後台直接匯入學員的 JSON 存檔檔案)
+app.post("/api/admin/import-save", (req, res) => {
+  const session = verifyAdminSession(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, error: "未授權訪問管理端點" });
+  }
+
+  const rawData = req.body?.data || req.body;
+  let importedCount = 0;
+  const items = Array.isArray(rawData) ? rawData : (Array.isArray(rawData.practiceLogs) ? rawData.practiceLogs : [rawData]);
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const logId = item.id || ("log_imp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7));
+    const entry = {
+      id: logId,
+      submittedAt: item.submittedAt || item.date || new Date().toISOString(),
+      clientIp: item.clientIp || "匯入檔案",
+      studentName: (item.studentName || item.studentNickname || "匯入學員").trim(),
+      frameworkId: item.frameworkId || "nvc",
+      frameworkName: item.frameworkName || "",
+      targetName: item.targetName || "練習對象",
+      targetRole: item.targetRole || "",
+      scenario: item.scenario || "",
+      difficulty: item.difficulty || "realistic",
+      turns: Number(item.turns) || 1,
+      score: Number(item.score) || 0,
+      level: item.level || "精準教練",
+      status: item.status || "已完成評估",
+      dimensionScores: item.dimensionScores || {},
+      summary: item.summary || "",
+      strengths: Array.isArray(item.strengths) ? item.strengths : [],
+      growthAreas: Array.isArray(item.growthAreas) ? item.growthAreas : [],
+      deliberatePracticeTips: Array.isArray(item.deliberatePracticeTips) ? item.deliberatePracticeTips : [],
+      frameworkDeepDive: item.frameworkDeepDive || null,
+      dialogueHistory: Array.isArray(item.dialogueHistory) ? item.dialogueHistory : []
+    };
+
+    const existingIdx = memoryPracticeLogs.findIndex(l => l.id === logId);
+    if (existingIdx >= 0) {
+      memoryPracticeLogs[existingIdx] = entry;
+    } else {
+      memoryPracticeLogs.unshift(entry);
+      importedCount++;
+    }
+  }
+
+  if (memoryPracticeLogs.length > 500) memoryPracticeLogs.length = 500;
+  res.json({
+    ok: true,
+    message: `成功匯入學員存檔，新增/更新了 ${importedCount} 筆實戰紀錄！`,
+    importedCount
+  });
 });
 
 // 啟動伺服器

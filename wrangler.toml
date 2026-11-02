@@ -16,4 +16,8 @@ mode = "smart"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "coachlab2026"
 
+[[kv_namespaces]]
+binding = "COACHQUEST_KV"
+id = "a8bb868d8eaf4858b54b457c69eded8a"
+
 

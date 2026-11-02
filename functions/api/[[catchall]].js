@@ -141,6 +141,8 @@ function resolveApiConfig(reqBody, env) {
     hasServerGemini: !!geminiEnvKey,
     deepseekEnvKey,
     geminiEnvKey,
+    deepseekFallbackKey: deepseekEnvKey || (clientKey.startsWith("sk-") ? clientKey : ""),
+    geminiFallbackKey: geminiEnvKey || (clientKey.startsWith("AIza") || clientKey.startsWith("AQ.") ? clientKey : ""),
     serverDeepseekPreview: deepseekEnvKey ? getKeyPreview(deepseekEnvKey) : null,
     serverGeminiPreview: geminiEnvKey ? getKeyPreview(geminiEnvKey) : null
   };
@@ -332,14 +334,14 @@ async function callGeminiApi({ apiKey, model, contents, systemInstruction, tempe
 }
 
 /**
- * 統一執行 AI 請求 (支援 DeepSeek 與 Gemini 自動降級備援)
+ * 統一執行 AI 請求 (支援 DeepSeek 與 Gemini 雙向極速自動降級備援)
  */
 async function executeAiTask({ config, systemInstruction, messages, temperature = 0.7, jsonMode = false, baseUrl }) {
-  const { provider, apiKey, model, geminiEnvKey, deepseekEnvKey } = config;
+  const { provider, apiKey, model, geminiEnvKey, deepseekEnvKey, geminiFallbackKey, deepseekFallbackKey } = config;
 
   if (provider === "deepseek") {
     try {
-      return await callDeepSeekApi({
+      const text = await callDeepSeekApi({
         apiKey,
         model,
         systemInstruction,
@@ -347,20 +349,20 @@ async function executeAiTask({ config, systemInstruction, messages, temperature 
         temperature,
         jsonMode
       });
+      return { text, fallbackUsed: false, provider: "deepseek", model };
     } catch (deepseekErr) {
-      console.warn(`[Dual-Engine Fallback] DeepSeek 呼叫失敗: ${deepseekErr.message}`);
-      // 若有 Gemini 備援金鑰，自動切換至 Gemini 執行
-      const fallbackGeminiKey = geminiEnvKey;
-      if (fallbackGeminiKey) {
-        console.info("[Dual-Engine Fallback] 啟用 Google Gemini 自動備援...");
+      console.warn(`[Dual-Engine Fallback] DeepSeek 呼叫失敗 (${deepseekErr.message})，嘗試啟動 Gemini 備援...`);
+      const fallbackKey = geminiFallbackKey || geminiEnvKey;
+      if (fallbackKey) {
+        console.info("[Dual-Engine Fallback] 成功切換至 Google Gemini 無縫備援...");
         const contents = [];
         for (const m of messages) {
           let text = typeof m.content === "string" ? m.content : (Array.isArray(m.parts) ? m.parts.map(p => p.text).join("\n") : "");
           const role = (m.role === "assistant" || m.role === "model") ? "model" : "user";
           contents.push({ role, parts: [{ text }] });
         }
-        return await callGeminiApi({
-          apiKey: fallbackGeminiKey,
+        const text = await callGeminiApi({
+          apiKey: fallbackKey,
           model: DEFAULT_GEMINI_MODEL,
           contents,
           systemInstruction,
@@ -368,6 +370,13 @@ async function executeAiTask({ config, systemInstruction, messages, temperature 
           jsonMode,
           baseUrl
         });
+        return {
+          text,
+          fallbackUsed: true,
+          provider: "gemini",
+          model: DEFAULT_GEMINI_MODEL,
+          fallbackInfo: { from: "deepseek", to: "gemini", reason: deepseekErr.message }
+        };
       }
       throw deepseekErr;
     }
@@ -380,7 +389,7 @@ async function executeAiTask({ config, systemInstruction, messages, temperature 
         const role = (m.role === "assistant" || m.role === "model") ? "model" : "user";
         contents.push({ role, parts: [{ text }] });
       }
-      return await callGeminiApi({
+      const text = await callGeminiApi({
         apiKey,
         model,
         contents,
@@ -389,20 +398,27 @@ async function executeAiTask({ config, systemInstruction, messages, temperature 
         jsonMode,
         baseUrl
       });
+      return { text, fallbackUsed: false, provider: "gemini", model };
     } catch (geminiErr) {
-      console.warn(`[Dual-Engine Fallback] Gemini 呼叫失敗: ${geminiErr.message}`);
-      // 若遇到區域限制或故障，且有 DeepSeek 備援金鑰，自動切換至 DeepSeek
-      const fallbackDeepseekKey = deepseekEnvKey;
-      if (fallbackDeepseekKey) {
-        console.info("[Dual-Engine Fallback] 啟用 DeepSeek 自動備援...");
-        return await callDeepSeekApi({
-          apiKey: fallbackDeepseekKey,
+      console.warn(`[Dual-Engine Fallback] Gemini 呼叫失敗 (${geminiErr.message})，嘗試啟動 DeepSeek 備援...`);
+      const fallbackKey = deepseekFallbackKey || deepseekEnvKey;
+      if (fallbackKey) {
+        console.info("[Dual-Engine Fallback] 成功切換至 DeepSeek 無縫備援...");
+        const text = await callDeepSeekApi({
+          apiKey: fallbackKey,
           model: DEFAULT_DEEPSEEK_MODEL,
           systemInstruction,
           messages,
           temperature,
           jsonMode
         });
+        return {
+          text,
+          fallbackUsed: true,
+          provider: "deepseek",
+          model: DEFAULT_DEEPSEEK_MODEL,
+          fallbackInfo: { from: "gemini", to: "deepseek", reason: geminiErr.message }
+        };
       }
       throw geminiErr;
     }
@@ -520,7 +536,7 @@ export async function onRequest(context) {
   // 學員練習紀錄與導師管理後台 API
   // ==========================================
 
-  // 1. POST /api/practice-logs/submit (學員實戰練習紀錄自動同步上傳)
+  // 1. POST /api/practice-logs/submit (學員實戰練習紀錄自動同步/中途即時快照上傳)
   if (pathname.endsWith("/practice-logs/submit") && request.method === "POST") {
     try {
       const clientIp = request.headers.get("cf-connecting-ip") || 
@@ -528,31 +544,41 @@ export async function onRequest(context) {
                        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || 
                        "雲端學員";
       
+      const payload = (body && typeof body.log === "object" && body.log !== null) ? body.log : body;
+      const logId = payload.id || ("log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7));
+      const status = payload.status || (payload.score ? "已完成評估" : "進行中 (未完成評估)");
+
       const logEntry = {
-        id: "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
-        submittedAt: new Date().toISOString(),
+        id: logId,
+        submittedAt: payload.submittedAt || new Date().toISOString(),
         clientIp,
-        studentName: (body.studentName || "學員教練").trim(),
-        frameworkId: body.frameworkId || "nvc",
-        frameworkName: body.frameworkName || "",
-        targetName: body.targetName || "練習對象",
-        targetRole: body.targetRole || "",
-        scenario: body.scenario || "",
-        difficulty: body.difficulty || "realistic",
-        turns: Number(body.turns) || 1,
-        score: Number(body.score) || 80,
-        level: body.level || "精準教練",
-        dimensionScores: body.dimensionScores || {},
-        summary: body.summary || "",
-        strengths: Array.isArray(body.strengths) ? body.strengths : [],
-        growthAreas: Array.isArray(body.growthAreas) ? body.growthAreas : [],
-        deliberatePracticeTips: Array.isArray(body.deliberatePracticeTips) ? body.deliberatePracticeTips : [],
-        frameworkDeepDive: body.frameworkDeepDive || null,
-        dialogueHistory: Array.isArray(body.dialogueHistory) ? body.dialogueHistory : []
+        studentName: (payload.studentName || payload.studentNickname || "學員教練").trim(),
+        frameworkId: payload.frameworkId || "nvc",
+        frameworkName: payload.frameworkName || "",
+        targetName: payload.targetName || "練習對象",
+        targetRole: payload.targetRole || "",
+        scenario: payload.scenario || "",
+        difficulty: payload.difficulty || "realistic",
+        turns: Number(payload.turns) || 1,
+        score: Number(payload.score) || 0,
+        level: payload.level || (status === "已完成評估" ? "精準教練" : "演練進行中"),
+        status,
+        dimensionScores: payload.dimensionScores || {},
+        summary: payload.summary || (status === "進行中 (未完成評估)" ? `學員正進行第 ${payload.turns || 1} 輪對話演練中...` : ""),
+        strengths: Array.isArray(payload.strengths) ? payload.strengths : [],
+        growthAreas: Array.isArray(payload.growthAreas) ? payload.growthAreas : [],
+        deliberatePracticeTips: Array.isArray(payload.deliberatePracticeTips) ? payload.deliberatePracticeTips : [],
+        frameworkDeepDive: payload.frameworkDeepDive || null,
+        dialogueHistory: Array.isArray(payload.dialogueHistory) ? payload.dialogueHistory : []
       };
 
       const logs = await getStoredPracticeLogs(env);
-      logs.unshift(logEntry);
+      const existingIdx = logs.findIndex(l => l.id === logId);
+      if (existingIdx >= 0) {
+        logs[existingIdx] = logEntry;
+      } else {
+        logs.unshift(logEntry);
+      }
       if (logs.length > 500) logs.length = 500;
       await saveStoredPracticeLogs(env, logs);
 
@@ -688,6 +714,65 @@ export async function onRequest(context) {
     return jsonResponse({ ok: true, message: "已清空所有練習紀錄" });
   }
 
+  // 8. POST /api/admin/import-save (導師後台直接匯入學員的 JSON 存檔檔案)
+  if (pathname.endsWith("/admin/import-save") && request.method === "POST") {
+    const session = verifyAdminSession(request, env);
+    if (!session) {
+      return jsonResponse({ ok: false, error: "未授權訪問管理端點" }, 401);
+    }
+
+    const rawData = body.data || body;
+    let importedCount = 0;
+    const logs = await getStoredPracticeLogs(env);
+
+    const items = Array.isArray(rawData) ? rawData : (Array.isArray(rawData.practiceLogs) ? rawData.practiceLogs : [rawData]);
+
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const logId = item.id || ("log_imp_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7));
+      const entry = {
+        id: logId,
+        submittedAt: item.submittedAt || item.date || new Date().toISOString(),
+        clientIp: item.clientIp || "匯入檔案",
+        studentName: (item.studentName || item.studentNickname || "匯入學員").trim(),
+        frameworkId: item.frameworkId || "nvc",
+        frameworkName: item.frameworkName || "",
+        targetName: item.targetName || "練習對象",
+        targetRole: item.targetRole || "",
+        scenario: item.scenario || "",
+        difficulty: item.difficulty || "realistic",
+        turns: Number(item.turns) || 1,
+        score: Number(item.score) || 0,
+        level: item.level || "精準教練",
+        status: item.status || "已完成評估",
+        dimensionScores: item.dimensionScores || {},
+        summary: item.summary || "",
+        strengths: Array.isArray(item.strengths) ? item.strengths : [],
+        growthAreas: Array.isArray(item.growthAreas) ? item.growthAreas : [],
+        deliberatePracticeTips: Array.isArray(item.deliberatePracticeTips) ? item.deliberatePracticeTips : [],
+        frameworkDeepDive: item.frameworkDeepDive || null,
+        dialogueHistory: Array.isArray(item.dialogueHistory) ? item.dialogueHistory : []
+      };
+
+      const existingIdx = logs.findIndex(l => l.id === entry.id);
+      if (existingIdx >= 0) {
+        logs[existingIdx] = entry;
+      } else {
+        logs.unshift(entry);
+        importedCount++;
+      }
+    }
+
+    if (logs.length > 500) logs.length = 500;
+    await saveStoredPracticeLogs(env, logs);
+
+    return jsonResponse({
+      ok: true,
+      message: `成功匯入學員存檔，新增/更新了 ${importedCount} 筆實戰紀錄！`,
+      importedCount
+    });
+  }
+
   // ==========================================
   // AI 互動端點 (POST)
   // ==========================================
@@ -777,7 +862,7 @@ export async function onRequest(context) {
         });
       }
 
-      const fullText = await executeAiTask({
+      const aiRes = await executeAiTask({
         config,
         systemInstruction,
         messages,
@@ -785,6 +870,7 @@ export async function onRequest(context) {
         baseUrl
       });
 
+      const fullText = aiRes.text || "";
       let innerThought = null;
       const innerMatch = fullText.match(/<!--inner:\s*([\s\S]*?)-->/i);
       let cleanText = fullText;
@@ -799,8 +885,10 @@ export async function onRequest(context) {
           text: cleanText,
           innerThought,
           raw: fullText,
-          provider: config.provider,
-          model: config.model
+          provider: aiRes.provider || config.provider,
+          model: aiRes.model || config.model,
+          fallbackUsed: aiRes.fallbackUsed,
+          fallbackInfo: aiRes.fallbackInfo || null
         }
       });
     } catch (err) {
@@ -832,7 +920,7 @@ export async function onRequest(context) {
         transcript: transcript || "（剛開始對話，尚未有實質來回）"
       });
 
-      const hintText = await executeAiTask({
+      const aiRes = await executeAiTask({
         config,
         systemInstruction: "你是一位資深的高級教練督導（Master Certified Coach）。請提供犀利且溫暖的引導錦囊。",
         messages: [{ role: "user", content: prompt }],
@@ -840,7 +928,14 @@ export async function onRequest(context) {
         baseUrl
       });
 
-      return jsonResponse({ ok: true, hint: hintText, provider: config.provider, model: config.model });
+      return jsonResponse({
+        ok: true,
+        hint: aiRes.text || "",
+        provider: aiRes.provider || config.provider,
+        model: aiRes.model || config.model,
+        fallbackUsed: aiRes.fallbackUsed,
+        fallbackInfo: aiRes.fallbackInfo || null
+      });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }
@@ -871,7 +966,7 @@ export async function onRequest(context) {
         transcript: transcript || "（無對話記錄）"
       });
 
-      const rawJson = await executeAiTask({
+      const aiRes = await executeAiTask({
         config,
         systemInstruction: "你是一位專業的高級教練考評考官。請務必嚴格以標準 JSON 格式輸出評估結果，不要附帶任何多餘文字。",
         messages: [{ role: "user", content: prompt }],
@@ -879,6 +974,8 @@ export async function onRequest(context) {
         jsonMode: true,
         baseUrl
       });
+
+      const rawJson = aiRes.text || "";
 
       let reportData;
       try {
@@ -935,7 +1032,14 @@ export async function onRequest(context) {
         }
       }
 
-      return jsonResponse({ ok: true, report: reportData, provider: config.provider, model: config.model });
+      return jsonResponse({
+        ok: true,
+        report: reportData,
+        provider: aiRes.provider || config.provider,
+        model: aiRes.model || config.model,
+        fallbackUsed: aiRes.fallbackUsed,
+        fallbackInfo: aiRes.fallbackInfo || null
+      });
     } catch (err) {
       return jsonResponse({ ok: false, error: err.message }, 500);
     }

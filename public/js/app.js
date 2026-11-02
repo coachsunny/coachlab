@@ -11,6 +11,7 @@ const state = {
   evaluationReport: null,
   isWaitingForAI: false,
   studentName: localStorage.getItem("coachlab_user_name") || "學員教練",
+  currentSessionId: null,
   apiKey: localStorage.getItem("coachlab_api_key") || localStorage.getItem("gemini_api_key") || "",
   geminiModel: localStorage.getItem("coachlab_model") || localStorage.getItem("gemini_model") || "gemini-3.6-flash",
   hasServerKey: false,
@@ -117,7 +118,13 @@ const elements = {
   btnCloseHistory: document.getElementById("btn-close-history"),
   btnDismissHistory: document.getElementById("btn-dismiss-history"),
   historyList: document.getElementById("history-list"),
-  btnClearHistory: document.getElementById("btn-clear-history")
+  btnClearHistory: document.getElementById("btn-clear-history"),
+
+  // Onboarding Nickname Modal
+  modalOnboarding: document.getElementById("modal-onboarding"),
+  inputOnboardingName: document.getElementById("input-onboarding-name"),
+  btnSaveOnboarding: document.getElementById("btn-save-onboarding"),
+  btnCloseOnboarding: document.getElementById("btn-close-onboarding")
 };
 
 // =================== 初始化函数 ===================
@@ -137,6 +144,14 @@ async function initApp() {
   updateKeyStatusUI();
   initLanguageUI();
   await checkServerStatus();
+
+  // 若尚未設定個人暱稱代稱，跳出溫馨引導卡
+  const storedNick = localStorage.getItem("coachlab_user_name");
+  if (!storedNick || storedNick.trim() === "" || storedNick === "學員教練") {
+    setTimeout(() => {
+      showOnboardingModal();
+    }, 450);
+  }
 }
 
 /**
@@ -362,9 +377,17 @@ function applyPreset(preset) {
 
 // =================== 开始练习与初始化对话 ===================
 async function startPractice() {
-  const studentName = elements.studentCoachName?.value.trim() || state.studentName || "學員教練";
+  let studentName = elements.studentCoachName?.value.trim() || state.studentName || "學員教練";
+  if (!studentName || studentName === "學員教練") {
+    const customNick = prompt(LangManager.t("請輸入您的教練代稱/暱稱（方便導師督導與個人存檔，留空則維持預設）:"), "");
+    if (customNick && customNick.trim()) {
+      studentName = customNick.trim();
+      if (elements.studentCoachName) elements.studentCoachName.value = studentName;
+    }
+  }
   state.studentName = studentName;
   localStorage.setItem("coachlab_user_name", studentName);
+  state.currentSessionId = "log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
 
   const targetName = elements.targetName.value.trim() || "练习对象";
   const targetRole = elements.targetRole.value.trim() || "同事";
@@ -536,6 +559,8 @@ async function handleSendMessage() {
     });
 
     updateTurnCount();
+    // 實況非同步即時快照存檔至後台 (防中途跳出遺失)
+    syncLivePracticeSnapshot();
   } catch (err) {
     removeTypingIndicator();
     let msg = err.message;
@@ -1065,12 +1090,54 @@ function downloadLiveChatTranscript() {
   URL.revokeObjectURL(url);
 }
 
+// 實況演練背景非同步即時快照存檔 (防止中途跳出遺失)
+let liveSyncTimer = null;
+function syncLivePracticeSnapshot() {
+  clearTimeout(liveSyncTimer);
+  liveSyncTimer = setTimeout(async () => {
+    if (!state.currentSessionId || state.chatHistory.length < 2) return;
+    try {
+      const userTurns = state.chatHistory.filter(m => m.role === "user").length;
+      const fw = FRAMEWORKS_DATA[state.targetConfig?.frameworkId] || FRAMEWORKS_DATA.nvc;
+      const studentName = (state.targetConfig?.studentName || state.studentName || localStorage.getItem("coachlab_user_name") || "學員教練").trim();
+
+      const payload = {
+        id: state.currentSessionId,
+        studentName,
+        frameworkId: state.targetConfig?.frameworkId || "nvc",
+        frameworkName: fw?.name || "教練模式",
+        targetName: state.targetConfig?.targetName || "練習對象",
+        targetRole: state.targetConfig?.targetRole || "",
+        scenario: state.targetConfig?.scenario || "",
+        difficulty: state.targetConfig?.difficulty || "realistic",
+        turns: userTurns,
+        score: 0,
+        level: "演練實況進行中",
+        status: "進行中 (未完成評估)",
+        summary: `學員正進行第 ${userTurns} 輪對話演練中...`,
+        dialogueHistory: state.chatHistory.map(m => ({
+          role: m.role,
+          content: m.content,
+          innerThought: m.innerThought || ""
+        }))
+      };
+
+      await fetch("/api/practice-logs/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    } catch (_) {}
+  }, 1000);
+}
+
 async function syncPracticeLogToBackend(report, userTurns) {
   try {
     const studentName = (state.targetConfig?.studentName || state.studentName || localStorage.getItem("coachlab_user_name") || "學員教練").trim();
     const fw = FRAMEWORKS_DATA[state.targetConfig?.frameworkId] || FRAMEWORKS_DATA.nvc;
 
     const payload = {
+      id: state.currentSessionId || ("log_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)),
       studentName,
       frameworkId: state.targetConfig?.frameworkId || "nvc",
       frameworkName: fw?.name || "教練模式",
@@ -1081,6 +1148,7 @@ async function syncPracticeLogToBackend(report, userTurns) {
       turns: userTurns || 1,
       score: report.overallScore || 80,
       level: report.overallLevel || "精準教練",
+      status: "已完成評估",
       dimensionScores: report.dimensionScores || {},
       summary: report.summary || "",
       strengths: report.strengths || [],
@@ -1140,6 +1208,34 @@ function hideModals() {
   elements.modalSettings.classList.add("hidden");
   elements.modalHint.classList.add("hidden");
   elements.modalHistory.classList.add("hidden");
+  elements.modalOnboarding?.classList.add("hidden");
+}
+
+// =================== 初次進入代稱引導 (Onboarding) ===================
+function showOnboardingModal() {
+  if (elements.modalOnboarding) {
+    if (elements.inputOnboardingName) {
+      elements.inputOnboardingName.value = (state.studentName && state.studentName !== "學員教練") ? state.studentName : "";
+    }
+    elements.modalOnboarding.classList.remove("hidden");
+    if (elements.inputOnboardingName) elements.inputOnboardingName.focus();
+    if (LangManager.getLang() === "zh-TW") {
+      LangManager.translateDOM(elements.modalOnboarding);
+    }
+  }
+}
+
+function hideOnboardingModal() {
+  elements.modalOnboarding?.classList.add("hidden");
+}
+
+function saveOnboardingNickname() {
+  const val = elements.inputOnboardingName?.value.trim() || "";
+  const finalName = val || "學員教練";
+  state.studentName = finalName;
+  localStorage.setItem("coachlab_user_name", finalName);
+  if (elements.studentCoachName) elements.studentCoachName.value = finalName;
+  hideOnboardingModal();
 }
 
 // =================== 事件监听绑定 ===================
@@ -1296,10 +1392,21 @@ function bindEvents() {
   });
 
   // 点击弹窗外关闭
-  [elements.modalSettings, elements.modalHint, elements.modalHistory].forEach(modal => {
+  [elements.modalSettings, elements.modalHint, elements.modalHistory, elements.modalOnboarding].forEach(modal => {
+    if (!modal) return;
     modal.addEventListener("click", (e) => {
       if (e.target === modal) hideModals();
     });
+  });
+
+  // Onboarding Nickname Modal 綁定
+  elements.btnSaveOnboarding?.addEventListener("click", saveOnboardingNickname);
+  elements.btnCloseOnboarding?.addEventListener("click", hideOnboardingModal);
+  elements.inputOnboardingName?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveOnboardingNickname();
+    }
   });
 }
 
